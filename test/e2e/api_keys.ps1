@@ -1,9 +1,10 @@
-# E2E CBL-7.2: API-ключи мерчантов на compose-стенде billing-api.
+# E2E CBL-7.2/7.3: API-ключи и старт сервиса на compose-стенде billing-api.
 # Запуск из каталога сервиса: powershell -NoProfile -File test/e2e/api_keys.ps1
 # Сценарий: compose up (PostgreSQL + Redis) -> linux-сборка keyctl -> issue ->
 # verify (miss, затем hit через Redis) -> rotate (прежний ключ в окне
 # перекрытия, retiring один) -> revoke (verify отказ, кэш очищен, повтор
-# идемпотентен) -> list со статусами.
+# идемпотентен) -> list со статусами -> сборка и старт сервиса (профиль app),
+# readyz, миграции версии 2 (ключи и идемпотентность).
 # keyctl запускается контейнером в сети compose: хост-порт 6379 может быть
 # занят локальным redis на машине разработчика.
 $ErrorActionPreference = "Stop"
@@ -169,9 +170,30 @@ try {
     $finalVerify = Invoke-Keyctl @("verify", $thirdToken)
     if ($finalVerify -notmatch "merchant_id=m-e2e") { throw "third key must stay valid: $finalVerify" }
 
-    Write-Host "OK: migrations applied, issue/verify(cache)/rotate/revoke/list green, retiring window, tombstone инвалидация и идемпотентный revoke verified"
+    # Smoke сервиса (7.3): сборка по services-контексту, старт, readyz и
+    # миграции до версии 2 (api_keys, idempotency_keys).
+    $appUp = Invoke-Compose @("--profile", "app", "up", "-d", "--build")
+    if ($appUp.Code -ne 0) { throw "service build/up failed: $($appUp.Output)" }
+    $serviceReady = $false
+    foreach ($attempt in 1..30) {
+        $previous = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        try {
+            $response = Invoke-WebRequest -UseBasicParsing -TimeoutSec 3 http://localhost:8010/readyz
+            if ($response.StatusCode -eq 200) { $serviceReady = $true; break }
+        } catch {
+            Start-Sleep -Seconds 2
+        } finally {
+            $ErrorActionPreference = $previous
+        }
+    }
+    if (-not $serviceReady) { throw "billing-api readyz is not green" }
+    $migrations = (Invoke-Compose @("exec", "-T", "postgres", "psql", "-U", "cbl", "-d", "billing", "-t", "-A", "-c", "SELECT max(version_id) FROM goose_db_version")).Output
+    if (($migrations -join "").Trim() -ne "2") { throw "migrations version expected 2: $migrations" }
+
+    Write-Host "OK: migrations applied, issue/verify(cache)/rotate/revoke/list green, retiring window, tombstone инвалидация и идемпотентный revoke verified, service smoke (readyz, migrations=2) green"
 } finally {
-    Invoke-Compose @("down", "-v") | Out-Null
+    Invoke-Compose @("--profile", "app", "down", "-v") | Out-Null
     if (Test-Path $ToolsDir) { Remove-Item -Recurse -Force $ToolsDir }
     Pop-Location
 }

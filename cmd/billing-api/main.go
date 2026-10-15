@@ -27,9 +27,11 @@ import (
 
 // Значения конфигурации по умолчанию.
 const (
-	defaultCacheTTL = 5 * time.Minute
-	defaultDenyTTL  = time.Minute
-	defaultGrace    = 24 * time.Hour
+	defaultCacheTTL         = 5 * time.Minute
+	defaultDenyTTL          = time.Minute
+	defaultGrace            = 24 * time.Hour
+	defaultIdempotencyTTL   = 24 * time.Hour
+	defaultProcessingExpiry = 2 * time.Minute
 )
 
 // main запускает сервис и завершает процесс ненулевым кодом при ошибке
@@ -123,6 +125,25 @@ func run() error {
 		zap.Duration("deny_cache_ttl", denyTTL),
 		zap.Bool("redis_cache", cache != nil))
 
+	idempotencyTTL, err := durationEnv("IDEMPOTENCY_TTL", defaultIdempotencyTTL)
+	if err != nil {
+		return err
+	}
+	processingTimeout, err := durationEnv("IDEMPOTENCY_PROCESSING_TIMEOUT", defaultProcessingExpiry)
+	if err != nil {
+		return err
+	}
+	idempotency, err := usecase.NewIdempotency(repo, cache, log, usecase.IdempotencyConfig{
+		TTL:               idempotencyTTL,
+		ProcessingTimeout: processingTimeout,
+	})
+	if err != nil {
+		return fmt.Errorf("idempotency configuration: %w", err)
+	}
+	log.Info("idempotency configured",
+		zap.Duration("ttl", idempotencyTTL),
+		zap.Duration("processing_timeout", processingTimeout))
+
 	router := gin.New()
 	router.Use(ginmw.RequestID(), ginmw.AccessLog(log), ginmw.Recovery(log))
 	router.GET("/healthz", func(c *gin.Context) {
@@ -138,11 +159,15 @@ func run() error {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
 
-	// Мерчант API /v1: аутентификация ключом; маршруты добавляет 7.4.
-	router.Group("/v1", httpmw.Require(func(ctx context.Context, token string) (string, error) {
-		result, err := keys.Verify(ctx, token)
-		return result.MerchantID, err
-	}))
+	// Мерчант API /v1: аутентификация ключом и идемпотентность POST;
+	// маршруты добавляет 7.4.
+	router.Group("/v1",
+		httpmw.Require(func(ctx context.Context, token string) (string, error) {
+			result, err := keys.Verify(ctx, token)
+			return result.MerchantID, err
+		}),
+		httpmw.Idempotency(idempotency),
+	)
 
 	httpSrv := &http.Server{
 		Addr:              httpAddr,

@@ -11,7 +11,7 @@ BFF/оркестратор мерчант API /v1: принимает запро
 make build             # сборка
 make test              # unit-тесты
 make test-integration  # integration-тесты (testcontainers: PostgreSQL, Redis)
-make e2e               # compose-стенд: жизненный цикл API-ключей (7.2)
+make e2e               # compose-стенд: API-ключи (7.2) и старт сервиса (7.3)
 make vet               # go vet
 make lint              # golangci-lint в Docker
 make up                # зависимости + сервис в docker-compose
