@@ -8,10 +8,12 @@ BFF/оркестратор мерчант API /v1: принимает запро
 ## Команды
 
 ```powershell
-make build        # сборка
-make test         # мокнутые unit-тесты
-make vet          # go vet
-make lint         # golangci-lint в Docker
-make up           # зависимости + сервис в docker-compose
+make build             # сборка
+make test              # unit-тесты
+make test-integration  # integration-тесты (testcontainers: PostgreSQL, Redis)
+make e2e               # compose-стенд: жизненный цикл API-ключей (7.2)
+make vet               # go vet
+make lint              # golangci-lint в Docker
+make up                # зависимости + сервис в docker-compose
 make down
 ```
