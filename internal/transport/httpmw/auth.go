@@ -1,5 +1,5 @@
-// Пакет httpmw содержит HTTP-middleware сервиса billing-api: аутентификацию
-// API-ключом мерчанта (7.2).
+// Package httpmw contains the HTTP middleware of the billing-api service:
+// merchant API key authentication (7.2).
 package httpmw
 
 import (
@@ -15,16 +15,16 @@ import (
 	"github.com/cbl/cbl-billing-api/internal/domain"
 )
 
-// contextKey задает ключ контекста gin для мерчанта запроса.
+// contextKey sets the gin context key for the merchant of the request.
 const contextKey = "billing-api.merchant-id"
 
-// Verifier проверяет ключ и возвращает владельца; ошибка означает отказ.
+// Verifier checks the key and returns its owner; an error means rejection.
 type Verifier func(ctx context.Context, token string) (string, error)
 
-// Require возвращает middleware аутентификации: строгий Bearer-заголовок
-// (ровно один, схема регистронезависима по RFC 7235), проверка ключа,
-// 401 problem+json при отказе; при успехе мерчант кладется в контекст для
-// обработчиков /v1.
+// Require returns the authentication middleware: a strict Bearer header
+// (exactly one, the scheme is case-insensitive per RFC 7235), key verification,
+// 401 problem+json on rejection; on success the merchant is put into the
+// context for /v1 handlers.
 func Require(verify Verifier) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if len(c.Request.Header.Values("Authorization")) != 1 {
@@ -39,8 +39,9 @@ func Require(verify Verifier) gin.HandlerFunc {
 		merchantID, err := verify(c.Request.Context(), token)
 		if err != nil {
 			if !errors.Is(err, domain.ErrUnauthorized) {
-				// Проверка недоступна (БД): запрос не аутентифицирован, но это
-				// отказ зависимости, а не ключа - 503 с повтором.
+				// Verification is unavailable (DB): the request is not
+				// authenticated, but this is a dependency failure, not a key
+				// failure: 503 with a retry.
 				c.Header("Retry-After", "1")
 				ginmw.AbortWithProblem(c, http.StatusServiceUnavailable, "service_unavailable",
 					"Service Unavailable", "проверка ключа временно недоступна")
@@ -54,24 +55,24 @@ func Require(verify Verifier) gin.HandlerFunc {
 	}
 }
 
-// MerchantID возвращает мерчанта аутентифицированного запроса (пусто, если
-// middleware не применялся).
+// MerchantID returns the merchant of the authenticated request (empty if the
+// middleware was not applied).
 func MerchantID(c *gin.Context) string {
 	merchantID, _ := c.Get(contextKey)
 	value, _ := merchantID.(string)
 	return value
 }
 
-// AbortUnauthorized отвечает 401 в формате problem+json без деталей причины;
-// заголовок WWW-Authenticate соответствует схеме bearerAuth контракта.
+// AbortUnauthorized responds 401 in problem+json format without reason details;
+// the WWW-Authenticate header matches the contract bearerAuth scheme.
 func AbortUnauthorized(c *gin.Context) {
 	c.Header("WWW-Authenticate", `Bearer realm="billing"`)
 	ginmw.AbortWithProblem(c, http.StatusUnauthorized, "unauthorized",
 		"Unauthorized", "API-ключ отсутствует или недействителен")
 }
 
-// bearerToken извлекает токен из Authorization: схема Bearer
-// регистронезависима, токен - без пробелов внутри.
+// bearerToken extracts the token from Authorization: the Bearer scheme is
+// case-insensitive, the token has no spaces inside.
 func bearerToken(header string) (string, bool) {
 	scheme, token, found := strings.Cut(strings.TrimSpace(header), " ")
 	if !found || !strings.EqualFold(scheme, "Bearer") {

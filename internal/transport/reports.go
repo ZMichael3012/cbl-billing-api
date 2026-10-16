@@ -1,4 +1,4 @@
-// Пакет transport содержит HTTP-транспорт сервиса billing-api.
+// Package transport contains the HTTP transport of the billing-api service.
 package transport
 
 import (
@@ -18,7 +18,7 @@ import (
 	"github.com/cbl/cbl-billing-api/internal/transport/httpmw"
 )
 
-// Ограничения отчета мерчант API (openapi/billing.v1.yaml).
+// Merchant API report limits (openapi/billing.v1.yaml).
 const (
 	defaultReportLimit = 20
 	maxReportLimit     = 100
@@ -26,33 +26,33 @@ const (
 	maxCursorLength    = 512
 )
 
-// reportTypePattern ограничивает имя типа отчета в пути.
+// reportTypePattern restricts the report type name in the path.
 var reportTypePattern = regexp.MustCompile(`^[a-z0-9_]{1,64}$`)
 
-// ReportsClient описывает клиент отчетов (реализуется internal/reporting).
+// ReportsClient describes the reports client (implemented by internal/reporting).
 type ReportsClient interface {
 	Query(ctx context.Context, query reporting.Query) (reporting.Page, error)
 }
 
-// reportPage описывает ответ страницы отчета (ReportPage контракта).
+// reportPage describes the report page response (the contract ReportPage).
 type reportPage struct {
-	// Rows задает строки страницы.
+	// Rows sets the page rows.
 	Rows []reporting.Row `json:"rows"`
-	// NextCursor задает курсор следующей страницы.
+	// NextCursor sets the next page cursor.
 	NextCursor string `json:"next_cursor,omitempty"`
 }
 
-// RegisterReports регистрирует GET /v1/reports/{report_type}: мерчант всегда
-// берется из токена (7.2), параметры валидируются, ошибки Reporting
-// переводятся в problem+json (404 unknown_report_type, 400 validation_failed,
-// 503 service_unavailable).
+// RegisterReports registers GET /v1/reports/{report_type}: the merchant is
+// always taken from the token (7.2), parameters are validated, and Reporting
+// errors are translated into problem+json (404 unknown_report_type,
+// 400 validation_failed, 503 service_unavailable).
 func RegisterReports(group *gin.RouterGroup, client ReportsClient) {
 	group.GET("/reports/:report_type", func(c *gin.Context) {
 		handleReport(c, client)
 	})
 }
 
-// handleReport обслуживает один запрос отчета.
+// handleReport serves a single report request.
 func handleReport(c *gin.Context, client ReportsClient) {
 	reportType := c.Param("report_type")
 	if !reportTypePattern.MatchString(reportType) {
@@ -67,7 +67,7 @@ func handleReport(c *gin.Context, client ReportsClient) {
 	}
 	merchantID := httpmw.MerchantID(c)
 	if merchantID == "" {
-		// Маршрут вне группы Require - конфигурационная ошибка, не данные.
+		// The route is outside the Require group: a configuration error, not data.
 		abortUnavailable(c)
 		return
 	}
@@ -92,8 +92,8 @@ func handleReport(c *gin.Context, client ReportsClient) {
 	c.JSON(http.StatusOK, reportPage{Rows: page.Rows, NextCursor: page.NextCursor})
 }
 
-// parseReportQuery разбирает и валидирует параметры запроса; тип отчета уже
-// проверен по форме, merchant_id не принимается (источник - токен).
+// parseReportQuery parses and validates the request parameters; the report type
+// is already shape-checked, merchant_id is not accepted (the source is the token).
 func parseReportQuery(c *gin.Context, reportType string) (reporting.Query, error) {
 	query := reporting.Query{ReportType: reportType, MerchantID: httpmw.MerchantID(c)}
 	if raw := c.Query("period_from"); raw != "" {
@@ -137,13 +137,13 @@ func parseReportQuery(c *gin.Context, reportType string) (reporting.Query, error
 	return query, nil
 }
 
-// abortUnknownReport отвечает 404 контрактным кодом unknown_report_type.
+// abortUnknownReport responds 404 with the contract code unknown_report_type.
 func abortUnknownReport(c *gin.Context) {
 	ginmw.AbortWithProblem(c, http.StatusNotFound, "unknown_report_type",
 		"Not Found", "тип отчета не найден")
 }
 
-// abortUnavailable отвечает 503 с повтором (отчетность недоступна).
+// abortUnavailable responds 503 with a retry (reporting is unavailable).
 func abortUnavailable(c *gin.Context) {
 	c.Header("Retry-After", "1")
 	ginmw.AbortWithProblem(c, http.StatusServiceUnavailable, "service_unavailable",

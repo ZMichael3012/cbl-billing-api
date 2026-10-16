@@ -7,30 +7,31 @@ import (
 	"regexp"
 )
 
-// idempotencyKeyPattern задает форму заголовка Idempotency-Key (контракт 7.1).
+// idempotencyKeyPattern defines the Idempotency-Key header shape (contract 7.1).
 var idempotencyKeyPattern = regexp.MustCompile(`^[A-Za-z0-9._~-]{8,128}$`)
 
-// Ошибки домена идемпотентности; middleware маппит их в коды Problem.
+// Idempotency domain errors; the middleware maps them to Problem codes.
 var (
-	// ErrMissingIdempotencyKey сообщает об отсутствии обязательного заголовка.
+	// ErrMissingIdempotencyKey reports a missing required header.
 	ErrMissingIdempotencyKey = errors.New("idempotency: key is required")
-	// ErrInvalidIdempotencyKey сообщает о недопустимой форме ключа.
+	// ErrInvalidIdempotencyKey reports an invalid key shape.
 	ErrInvalidIdempotencyKey = errors.New("idempotency: invalid key format")
-	// ErrIdempotencyKeyReuse сообщает о переиспользовании ключа с другим телом.
+	// ErrIdempotencyKeyReuse reports key reuse with a different body.
 	ErrIdempotencyKeyReuse = errors.New("idempotency: key reuse with different request")
-	// ErrIdempotencyInProgress сообщает о конкурентной обработке того же ключа.
+	// ErrIdempotencyInProgress reports concurrent processing of the same key.
 	ErrIdempotencyInProgress = errors.New("idempotency: request with this key is in progress")
 )
 
-// ValidIdempotencyKey сообщает, что ключ допустим по форме.
+// ValidIdempotencyKey reports that the key shape is valid.
 func ValidIdempotencyKey(key string) bool {
 	return idempotencyKeyPattern.MatchString(key)
 }
 
-// RequestFingerprint вычисляет отпечаток запроса: sha256 от метода, пути и
-// сырого тела; область ключа (мерчант) учитывается уникальным индексом и не
-// входит в отпечаток, чтобы повтор с тем же телом и ключом у того же мерчанта
-// распознавался независимо от порядка полей (тело хэшируется как есть).
+// RequestFingerprint computes the request fingerprint: sha256 of the method,
+// path and raw body; the key scope (merchant) is handled by the unique index
+// and is not part of the fingerprint, so that a retry with the same body and
+// key by the same merchant is recognized regardless of field order (the body
+// is hashed as is).
 func RequestFingerprint(method, path string, body []byte) []byte {
 	hash := sha256.New()
 	_, _ = hash.Write([]byte(method))
@@ -41,7 +42,7 @@ func RequestFingerprint(method, path string, body []byte) []byte {
 	return hash.Sum(nil)
 }
 
-// ValidateIdempotencyKey проверяет ключ недоверенного запроса.
+// ValidateIdempotencyKey validates the key of an untrusted request.
 func ValidateIdempotencyKey(key string) error {
 	if key == "" {
 		return fmt.Errorf("%w", ErrMissingIdempotencyKey)

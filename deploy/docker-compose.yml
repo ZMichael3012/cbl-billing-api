@@ -28,12 +28,12 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
-  # reporting-stub - тестовая отчетность для e2e прокси /v1/reports (11.4);
-  # в продуктовый контур не входит, наружу не публикуется.
+  # reporting-stub - test reporting for the e2e of the /v1/reports proxy (11.4);
+  # not part of the production contour, not published externally.
   reporting-stub:
     build:
       context: ../..
-      dockerfile: cbl-billing-api/test/e2e/reportingstub/Dockerfile
+      dockerfile: cbl-billing-api/test/e2e/.additionals/reportingstub/Dockerfile
     environment:
       STUB_GRPC_ADDR: ":9000"
     networks: [cbl-net]
@@ -48,7 +48,7 @@ services:
       PG_DSN: postgres://cbl:cbl@postgres:5432/billing?sslmode=disable
       REDIS_ADDR: redis:6379
       MIGRATIONS_DIR: /app/migrations
-      # Прокси отчетов (11.4): на стенде - тестовый stub отчетности.
+      # Reports proxy (11.4): on the stand - the test reporting stub.
       REPORTING_GRPC_ADDR: reporting-stub:9000
       REPORTING_TIMEOUT: 5s
     ports:

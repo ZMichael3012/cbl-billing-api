@@ -1,8 +1,8 @@
 -- +goose Up
--- Идемпотентность мерчант API (7.3): источник истины - уникальный индекс
--- (merchant_id, key); снимок ответа хранится только для успешных вызовов.
--- Записи транзитные (окно IDEMPOTENCY_TTL, очистка - 14.2), поэтому DELETE
--- разрешен: при ошибке обработчика строка удаляется, мерчант повторяет.
+-- Merchant API idempotency (7.3): the source of truth is the unique index
+-- (merchant_id, key); the response snapshot is stored for successful calls only.
+-- Records are transient (the IDEMPOTENCY_TTL window; cleanup - 14.2), so DELETE
+-- is allowed: on a handler error the row is removed and the merchant retries.
 CREATE TABLE idempotency_keys (
     id                    uuid        PRIMARY KEY,
     merchant_id           text        NOT NULL CHECK (merchant_id ~ '^[A-Za-z0-9_-]{1,128}$'),

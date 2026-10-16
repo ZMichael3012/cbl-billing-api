@@ -16,7 +16,7 @@ import (
 	"github.com/cbl/cbl-billing-api/internal/usecase"
 )
 
-// fakeDecider подменяет слой идемпотентности и фиксирует вызовы.
+// fakeDecider replaces the idempotency layer and records calls.
 type fakeDecider struct {
 	decision     usecase.Decision
 	beginErr     error
@@ -46,8 +46,8 @@ func (f *fakeDecider) Finish(_ context.Context, _, _, attemptID string, _ []byte
 	return f.finishErr
 }
 
-// newIdempotencyRouter собирает роутер с подставленным мерчантом, middleware
-// идемпотентности и эхо-обработчиком POST.
+// newIdempotencyRouter builds a router with an injected merchant, the
+// idempotency middleware and an echo POST handler.
 func newIdempotencyRouter(decider IdempotencyDecider) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
@@ -60,7 +60,7 @@ func newIdempotencyRouter(decider IdempotencyDecider) *gin.Engine {
 	return router
 }
 
-// doIdempotencyProbe выполняет запрос к пробному маршруту.
+// doIdempotencyProbe performs a request to the probe route.
 func doIdempotencyProbe(router *gin.Engine, method, key, body string) *httptest.ResponseRecorder {
 	request := httptest.NewRequest(method, "/v1/probe", strings.NewReader(body))
 	if key != "" {
@@ -78,7 +78,7 @@ func TestIdempotencyMiddlewareSkipsGetAndRequiresKey(t *testing.T) {
 	router := newIdempotencyRouter(decider)
 
 	assert.Equal(t, http.StatusOK, doIdempotencyProbe(router, http.MethodGet, "", "").Code)
-	assert.Zero(t, decider.beginCalls, "GET не трогает идемпотентность")
+	assert.Zero(t, decider.beginCalls, "GET does not touch idempotency")
 
 	recorder := doIdempotencyProbe(router, http.MethodPost, "", `{}`)
 	assert.Equal(t, http.StatusBadRequest, recorder.Code)
@@ -90,8 +90,8 @@ func TestIdempotencyMiddlewareSkipsGetAndRequiresKey(t *testing.T) {
 	assert.Contains(t, recorder.Body.String(), "validation_failed")
 }
 
-// TestIdempotencyMiddlewareDuplicateHeader проверяет отказ при двух заголовках:
-// расхождение значений с периметром исключено.
+// TestIdempotencyMiddlewareDuplicateHeader verifies rejection with two headers:
+// disagreement of values with the perimeter is excluded.
 func TestIdempotencyMiddlewareDuplicateHeader(t *testing.T) {
 	t.Parallel()
 
@@ -109,7 +109,7 @@ func TestIdempotencyMiddlewareDuplicateHeader(t *testing.T) {
 	assert.Zero(t, decider.beginCalls)
 }
 
-// TestIdempotencyMiddlewareRequestLimit проверяет предел тела запроса.
+// TestIdempotencyMiddlewareRequestLimit verifies the request body limit.
 func TestIdempotencyMiddlewareRequestLimit(t *testing.T) {
 	t.Parallel()
 
@@ -120,7 +120,7 @@ func TestIdempotencyMiddlewareRequestLimit(t *testing.T) {
 	recorder := doIdempotencyProbe(router, http.MethodPost, "key-00000003", oversized)
 	assert.Equal(t, http.StatusRequestEntityTooLarge, recorder.Code)
 	assert.Contains(t, recorder.Body.String(), "payload_too_large")
-	assert.Zero(t, decider.beginCalls, "превышение предела отклоняется до журнала")
+	assert.Zero(t, decider.beginCalls, "exceeding the limit is rejected before the journal")
 }
 
 func TestIdempotencyMiddlewareReplayAndConflicts(t *testing.T) {
@@ -141,7 +141,7 @@ func TestIdempotencyMiddlewareReplayAndConflicts(t *testing.T) {
 	assert.Equal(t, "true", recorder.Header().Get("Idempotent-Replayed"))
 	assert.Equal(t, `{"id":"inv-1"}`, recorder.Body.String())
 	assert.Contains(t, recorder.Header().Get("Content-Type"), "application/json")
-	assert.Zero(t, decider.finishCalls, "реплей не вызывает обработчик и Finish")
+	assert.Zero(t, decider.finishCalls, "replay does not call the handler or Finish")
 
 	decider.decision = usecase.Decision{Kind: usecase.DecisionConflict, Reason: domain.ErrIdempotencyKeyReuse}
 	recorder = doIdempotencyProbe(router, http.MethodPost, "key-00000001", `{"a":2}`)
@@ -162,16 +162,16 @@ func TestIdempotencyMiddlewareProceedCapturesResponse(t *testing.T) {
 
 	recorder := doIdempotencyProbe(router, http.MethodPost, "key-00000002", `{"a":1}`)
 	require.Equal(t, http.StatusCreated, recorder.Code)
-	assert.Contains(t, recorder.Body.String(), `"echo":"{\"a\":1}"`, "тело восстановлено для обработчика")
+	assert.Contains(t, recorder.Body.String(), `"echo":"{\"a\":1}"`, "the body is restored for the handler")
 	assert.Equal(t, 1, decider.finishCalls)
-	assert.Equal(t, "attempt-42", decider.lastAttempt, "Finish адресует попытку из решения")
+	assert.Equal(t, "attempt-42", decider.lastAttempt, "Finish addresses the attempt from the decision")
 	assert.Equal(t, http.StatusCreated, decider.lastStatus)
 	assert.Contains(t, string(decider.lastBody), `"echo"`)
 	assert.False(t, decider.lastOverflow)
 }
 
-// TestIdempotencyMiddlewareOverflow проверяет, что большой ответ не
-// буферизуется, но клиенту отдается полностью.
+// TestIdempotencyMiddlewareOverflow verifies that a large response is not
+// buffered but is fully returned to the client.
 func TestIdempotencyMiddlewareOverflow(t *testing.T) {
 	t.Parallel()
 
@@ -189,8 +189,8 @@ func TestIdempotencyMiddlewareOverflow(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, request)
 	require.Equal(t, http.StatusOK, recorder.Code)
-	assert.Len(t, recorder.Body.String(), usecase.MaxIdempotencyResponseBytes+1, "клиент получает полный ответ")
-	assert.True(t, decider.lastOverflow, "снимок не сохраняется")
+	assert.Len(t, recorder.Body.String(), usecase.MaxIdempotencyResponseBytes+1, "the client receives the full response")
+	assert.True(t, decider.lastOverflow, "the snapshot is not saved")
 	assert.Empty(t, decider.lastBody)
 }
 
@@ -209,5 +209,5 @@ func TestIdempotencyMiddlewareFailClosedAndFinishFailure(t *testing.T) {
 	decider.decision = usecase.Decision{Kind: usecase.DecisionProceed, AttemptID: "attempt-3"}
 	decider.finishErr = errors.New("snapshot failed")
 	recorder = doIdempotencyProbe(router, http.MethodPost, "key-00000003", `{}`)
-	assert.Equal(t, http.StatusCreated, recorder.Code, "сбой фиксации не меняет ответ")
+	assert.Equal(t, http.StatusCreated, recorder.Code, "a commit failure does not change the response")
 }

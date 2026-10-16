@@ -16,27 +16,27 @@ import (
 	"github.com/cbl/cbl-billing-api/internal/usecase"
 )
 
-// Константы middleware идемпотентности.
+// Idempotency middleware constants.
 const (
-	// idempotencyHeader задает обязательный заголовок ключа идемпотентности.
+	// idempotencyHeader sets the mandatory idempotency key header.
 	idempotencyHeader = "Idempotency-Key"
-	// MaxIdempotencyRequestBytes задает предел тела мутирующего запроса:
-	// защита от memory DoS (снимок ответа ограничен отдельно, 256 KiB).
+	// MaxIdempotencyRequestBytes sets the mutating request body limit: memory
+	// DoS protection (the response snapshot is limited separately, 256 KiB).
 	MaxIdempotencyRequestBytes = 1 << 20
-	// finishTimeout задает бюджет фиксации ответа после отмены запроса клиентом.
+	// finishTimeout sets the response commit budget after the client cancels the request.
 	finishTimeout = 5 * time.Second
 )
 
-// IdempotencyDecider описывает решения слоя идемпотентности (usecase).
+// IdempotencyDecider describes the decisions of the idempotency layer (usecase).
 type IdempotencyDecider interface {
 	Begin(ctx context.Context, merchantID, key string, fingerprint []byte) (usecase.Decision, error)
 	Finish(ctx context.Context, merchantID, key, attemptID string, fingerprint []byte, status int, contentType string, body []byte, overflow bool) error
 }
 
-// Idempotency возвращает middleware идемпотентности для POST-маршрутов:
-// повтор с тем же телом отдает сохраненный ответ с Idempotent-Replayed,
-// другое тело при том же ключе - 409, ошибки ключ не занимают. Применяется
-// после аутентификации (мерчант из контекста).
+// Idempotency returns the idempotency middleware for POST routes: a retry with
+// the same body returns the saved response with Idempotent-Replayed, a
+// different body with the same key gives 409, errors do not occupy the key. It
+// is applied after authentication (the merchant comes from the context).
 func Idempotency(decider IdempotencyDecider) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if c.Request.Method != http.MethodPost {
@@ -61,7 +61,8 @@ func Idempotency(decider IdempotencyDecider) gin.HandlerFunc {
 
 		decision, err := decider.Begin(c.Request.Context(), merchantID, key, fingerprint)
 		if err != nil {
-			// Без журнала решений повтор неотличим от нового вызова: fail-closed.
+			// Without the decision journal, a retry is indistinguishable from a
+			// new call: fail-closed.
 			c.Header("Retry-After", "1")
 			ginmw.AbortWithProblem(c, http.StatusServiceUnavailable, "service_unavailable",
 				"Service Unavailable", "идемпотентность временно недоступна")
@@ -79,13 +80,13 @@ func Idempotency(decider IdempotencyDecider) gin.HandlerFunc {
 		writer := &snapshotWriter{ResponseWriter: c.Writer}
 		c.Writer = writer
 		defer func() {
-			// Фиксация выполняется независимо от отмены клиента: успешный
-			// ответ не должен теряться из-за дисконнекта.
+			// The commit runs regardless of client cancellation: a successful
+			// response must not be lost because of a disconnect.
 			finishCtx, cancel := context.WithTimeout(context.WithoutCancel(c.Request.Context()), finishTimeout)
 			defer cancel()
 			status := writer.Status()
 			if status == 0 {
-				// Паника или пустой ответ: попытка освобождается.
+				// A panic or an empty response: the attempt is released.
 				status = http.StatusInternalServerError
 			}
 			_ = decider.Finish(finishCtx, merchantID, key, decision.AttemptID, fingerprint,
@@ -95,12 +96,12 @@ func Idempotency(decider IdempotencyDecider) gin.HandlerFunc {
 	}
 }
 
-// idempotencyKey извлекает и валидирует единственный заголовок ключа.
+// idempotencyKey extracts and validates the single key header.
 func idempotencyKey(c *gin.Context) (string, bool) {
 	values := c.Request.Header.Values(idempotencyHeader)
 	if len(values) != 1 {
-		// Отсутствие и дубли заголовка недопустимы: расхождение значений
-		// с периметром исключено (как у Authorization).
+		// A missing or duplicated header is not allowed: disagreement of values
+		// with the perimeter is excluded (as with Authorization).
 		if len(values) == 0 {
 			abortIdempotencyError(c, domain.ErrMissingIdempotencyKey)
 		} else {
@@ -116,8 +117,8 @@ func idempotencyKey(c *gin.Context) (string, bool) {
 	return key, true
 }
 
-// readLimitedBody читает тело запроса с ограничением; тело восстанавливается
-// для обработчика.
+// readLimitedBody reads the request body with a limit; the body is restored
+// for the handler.
 func readLimitedBody(c *gin.Context) ([]byte, error) {
 	limited := http.MaxBytesReader(c.Writer, c.Request.Body, MaxIdempotencyRequestBytes)
 	body, err := io.ReadAll(limited)
@@ -128,8 +129,8 @@ func readLimitedBody(c *gin.Context) ([]byte, error) {
 	return body, nil
 }
 
-// abortBodyError отвечает на ошибку чтения тела: превышение предела - 413,
-// прочие сбои транспорта - 400.
+// abortBodyError responds to a body read error: exceeding the limit gives 413,
+// other transport failures give 400.
 func abortBodyError(c *gin.Context, err error) {
 	var maxBytes *http.MaxBytesError
 	if errors.As(err, &maxBytes) {
@@ -141,7 +142,7 @@ func abortBodyError(c *gin.Context, err error) {
 		"Bad Request", "тело запроса не читается")
 }
 
-// replay отдает сохраненный ответ с признаком повтора.
+// replay returns the saved response with the replay marker.
 func replay(c *gin.Context, snapshot usecase.Snapshot) {
 	if snapshot.ContentType != "" {
 		c.Header("Content-Type", snapshot.ContentType)
@@ -152,7 +153,7 @@ func replay(c *gin.Context, snapshot usecase.Snapshot) {
 	c.Abort()
 }
 
-// abortIdempotencyError маппит ошибки ключа в problem+json.
+// abortIdempotencyError maps key errors to problem+json.
 func abortIdempotencyError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, domain.ErrMissingIdempotencyKey):
@@ -173,15 +174,15 @@ func abortIdempotencyError(c *gin.Context, err error) {
 	}
 }
 
-// snapshotWriter захватывает тело и статус ответа для сохранения снимка;
-// тела сверх предела не буферизуются, но клиенту отдаются полностью.
+// snapshotWriter captures the response body and status to save a snapshot;
+// bodies above the limit are not buffered but are fully returned to the client.
 type snapshotWriter struct {
 	gin.ResponseWriter
 	buf      bytes.Buffer
 	overflow bool
 }
 
-// Write при необходимости запоминает тело ответа.
+// Write remembers the response body when needed.
 func (w *snapshotWriter) Write(data []byte) (int, error) {
 	if !w.overflow && w.buf.Len()+len(data) <= usecase.MaxIdempotencyResponseBytes {
 		w.buf.Write(data)
@@ -191,7 +192,7 @@ func (w *snapshotWriter) Write(data []byte) (int, error) {
 	return w.ResponseWriter.Write(data)
 }
 
-// WriteString при необходимости запоминает тело ответа.
+// WriteString remembers the response body when needed.
 func (w *snapshotWriter) WriteString(s string) (int, error) {
 	if !w.overflow && w.buf.Len()+len(s) <= usecase.MaxIdempotencyResponseBytes {
 		w.buf.WriteString(s)
@@ -201,7 +202,7 @@ func (w *snapshotWriter) WriteString(s string) (int, error) {
 	return w.ResponseWriter.WriteString(s)
 }
 
-// Body возвращает захваченное тело; при переполнении буфера пусто.
+// Body returns the captured body; it is empty when the buffer overflowed.
 func (w *snapshotWriter) Body() []byte {
 	if w.overflow {
 		return nil
@@ -209,7 +210,7 @@ func (w *snapshotWriter) Body() []byte {
 	return w.buf.Bytes()
 }
 
-// Overflow сообщает, что ответ превысил предел снимка: он не сохраняется.
+// Overflow reports that the response exceeded the snapshot limit: it is not saved.
 func (w *snapshotWriter) Overflow() bool {
 	return w.overflow
 }

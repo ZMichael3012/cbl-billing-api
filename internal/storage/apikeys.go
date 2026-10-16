@@ -13,49 +13,49 @@ import (
 	"github.com/cbl/cbl-billing-api/internal/domain"
 )
 
-// Ошибки storage.
+// Storage errors.
 var (
-	// ErrNotFound сообщает об отсутствии записи.
+	// ErrNotFound reports a missing record.
 	ErrNotFound = errors.New("billing-api storage: not found")
-	// ErrDuplicateKey сообщает о занятом уникальном ключе (token_hash, prefix).
+	// ErrDuplicateKey reports a taken unique key (token_hash, prefix).
 	ErrDuplicateKey = errors.New("billing-api storage: duplicate key")
-	// ErrActiveKeyExists сообщает о существующем активном ключе мерчанта.
+	// ErrActiveKeyExists reports an existing active key of the merchant.
 	ErrActiveKeyExists = errors.New("billing-api storage: active key already exists")
-	// ErrStatusConflict сообщает об отсутствии строки под конкурентное
-	// обновление статуса (гонка ротации/отзыва).
+	// ErrStatusConflict reports that no row matched the concurrent status
+	// update (rotation/revocation race).
 	ErrStatusConflict = errors.New("billing-api storage: status conflict")
-	// ErrSessionUnavailable сообщает о недоступности PostgreSQL.
+	// ErrSessionUnavailable reports that PostgreSQL is unavailable.
 	ErrSessionUnavailable = errors.New("billing-api storage: postgres unavailable")
 )
 
-// APIKey описывает строку таблицы api_keys.
+// APIKey describes an api_keys table row.
 type APIKey struct {
-	// ID задает UUIDv7 записи.
+	// ID defines the record UUIDv7.
 	ID string `gorm:"column:id;type:uuid;primaryKey"`
-	// MerchantID задает владельца ключа.
+	// MerchantID defines the key owner.
 	MerchantID string `gorm:"column:merchant_id"`
-	// Prefix задает публичный префикс ключа.
+	// Prefix defines the public key prefix.
 	Prefix string `gorm:"column:prefix"`
-	// TokenHash задает sha256 полного ключа.
+	// TokenHash defines the sha256 of the full key.
 	TokenHash []byte `gorm:"column:token_hash"`
-	// Status задает состояние жизненного цикла.
+	// Status defines the lifecycle state.
 	Status string `gorm:"column:status"`
-	// CreatedAt задает время выпуска.
+	// CreatedAt defines the issue time.
 	CreatedAt time.Time `gorm:"column:created_at"`
-	// ExpiresAt задает конец окна перекрытия для retiring-ключа.
+	// ExpiresAt defines the overlap window end for a retiring key.
 	ExpiresAt *time.Time `gorm:"column:expires_at"`
-	// RevokedAt задает время отзыва.
+	// RevokedAt defines the revocation time.
 	RevokedAt *time.Time `gorm:"column:revoked_at"`
-	// LastUsedAt задает последнее успешное использование.
+	// LastUsedAt defines the last successful use.
 	LastUsedAt *time.Time `gorm:"column:last_used_at"`
-	// ExpiresValid задает вычисленный БД признак действующего срока (SELECT only).
+	// ExpiresValid defines the DB-computed validity flag (SELECT only).
 	ExpiresValid bool `gorm:"column:expires_valid;->"`
 }
 
-// TableName задает имя таблицы ключей.
+// TableName defines the keys table name.
 func (APIKey) TableName() string { return "api_keys" }
 
-// APIKeyFromDomain переводит доменную запись ключа в строку таблицы.
+// APIKeyFromDomain converts a domain key record to a table row.
 func APIKeyFromDomain(key domain.APIKey) APIKey {
 	return APIKey{
 		ID:         key.ID,
@@ -70,7 +70,7 @@ func APIKeyFromDomain(key domain.APIKey) APIKey {
 	}
 }
 
-// APIKeyToDomain переводит строку таблицы в доменную запись.
+// APIKeyToDomain converts a table row to a domain record.
 func APIKeyToDomain(key APIKey) domain.APIKey {
 	return domain.APIKey{
 		ID:           key.ID,
@@ -86,8 +86,8 @@ func APIKeyToDomain(key APIKey) domain.APIKey {
 	}
 }
 
-// CreateAPIKey вставляет новую запись ключа; нарушение уникальности
-// отображается в ErrActiveKeyExists (активный ключ) или ErrDuplicateKey.
+// CreateAPIKey inserts a new key record; a uniqueness violation is mapped to
+// ErrActiveKeyExists (active key) or ErrDuplicateKey.
 func (r *Repository) CreateAPIKey(ctx context.Context, key domain.APIKey) error {
 	row := APIKeyFromDomain(key)
 	err := r.db.WithContext(ctx).Create(&row).Error
@@ -103,13 +103,13 @@ func (r *Repository) CreateAPIKey(ctx context.Context, key domain.APIKey) error 
 	return fmt.Errorf("storage: create api key: %w", err)
 }
 
-// FindAPIKeyByHash возвращает ключ по sha256 полного токена; признак срока
-// (ExpiresValid) вычисляется БД по now() сервера.
+// FindAPIKeyByHash returns the key by the sha256 of the full token; the
+// validity flag (ExpiresValid) is computed by the DB from the server now().
 func (r *Repository) FindAPIKeyByHash(ctx context.Context, tokenHash []byte) (domain.APIKey, error) {
 	return r.findAPIKey(ctx, "token_hash = ?", tokenHash)
 }
 
-// FindAPIKeyByRef возвращает ключ по id или prefix.
+// FindAPIKeyByRef returns the key by id or prefix.
 func (r *Repository) FindAPIKeyByRef(ctx context.Context, ref string) (domain.APIKey, error) {
 	if _, err := uuid.Parse(ref); err == nil {
 		return r.findAPIKey(ctx, "id = ?::uuid", ref)
@@ -117,7 +117,7 @@ func (r *Repository) FindAPIKeyByRef(ctx context.Context, ref string) (domain.AP
 	return r.findAPIKey(ctx, "prefix = ?", ref)
 }
 
-// findAPIKey ищет единственную запись по условию.
+// findAPIKey finds the single record matching the condition.
 func (r *Repository) findAPIKey(ctx context.Context, where string, args ...any) (domain.APIKey, error) {
 	var row APIKey
 	err := r.db.WithContext(ctx).
@@ -132,7 +132,7 @@ func (r *Repository) findAPIKey(ctx context.Context, where string, args ...any) 
 	return APIKeyToDomain(row), nil
 }
 
-// ListAPIKeysByMerchant возвращает ключи мерчанта от новых к старым.
+// ListAPIKeysByMerchant returns the merchant keys from newest to oldest.
 func (r *Repository) ListAPIKeysByMerchant(ctx context.Context, merchantID string) ([]domain.APIKey, error) {
 	var rows []APIKey
 	err := r.db.WithContext(ctx).
@@ -149,11 +149,12 @@ func (r *Repository) ListAPIKeysByMerchant(ctx context.Context, merchantID strin
 	return keys, nil
 }
 
-// RotateAPIKeys выполняет ротацию в одной транзакции: отзывает существующий
-// retiring-ключ, переводит active в retiring с окном до graceUntil и вставляет
-// новый active. Возвращает ключи, чьи записи кэша проверки обязана обновить
-// usecase-логика: отозванные retiring (tombstone) и переведенный в retiring
-// active (DEL). Отсутствие active-ключа (гонка) - ErrStatusConflict.
+// RotateAPIKeys performs the rotation in a single transaction: it revokes the
+// existing retiring key, moves active to retiring with a window until
+// graceUntil and inserts a new active key. It returns the keys whose
+// verification cache entries the usecase logic must update: the revoked
+// retiring keys (tombstone) and the active key moved to retiring (DEL).
+// A missing active key (race) is ErrStatusConflict.
 func (r *Repository) RotateAPIKeys(ctx context.Context, merchantID string, newKey domain.APIKey, graceUntil time.Time) ([]domain.APIKey, domain.APIKey, error) {
 	var revokedRetiring []domain.APIKey
 	var retiredActive domain.APIKey
@@ -209,8 +210,8 @@ func (r *Repository) RotateAPIKeys(ctx context.Context, merchantID string, newKe
 	return revokedRetiring, retiredActive, nil
 }
 
-// RevokeAPIKey переводит ключ в revoked; уже отозванный ключ возвращается как
-// есть (идемпотентность), отсутствие - ErrNotFound.
+// RevokeAPIKey moves the key to revoked; an already revoked key is returned
+// as is (idempotency), a missing one is ErrNotFound.
 func (r *Repository) RevokeAPIKey(ctx context.Context, ref string) (domain.APIKey, error) {
 	key, err := r.FindAPIKeyByRef(ctx, ref)
 	if err != nil {
@@ -226,13 +227,13 @@ func (r *Repository) RevokeAPIKey(ctx context.Context, ref string) (domain.APIKe
 	if result.Error != nil {
 		return domain.APIKey{}, fmt.Errorf("storage: revoke api key: %w", result.Error)
 	}
-	// Конкурентный отзыв уже применил терминальное состояние: повторное чтение
-	// возвращает актуальную запись.
+	// A concurrent revoke already applied the terminal state: the second read
+	// returns the current record.
 	return r.FindAPIKeyByRef(ctx, ref)
 }
 
-// TouchAPIKeyLastUsed обновляет время последнего использования ключа;
-// отозванные ключи триггером не изменяются, ошибка не критична для проверки.
+// TouchAPIKeyLastUsed updates the last used time of the key; revoked keys are
+// not changed by the trigger, and the error is not critical for verification.
 func (r *Repository) TouchAPIKeyLastUsed(ctx context.Context, id string) error {
 	err := r.db.WithContext(ctx).Model(&APIKey{}).
 		Where("id = ? AND status <> ?", id, string(domain.StatusRevoked)).
@@ -243,8 +244,8 @@ func (r *Repository) TouchAPIKeyLastUsed(ctx context.Context, id string) error {
 	return nil
 }
 
-// uniqueViolationConstraint возвращает имя нарушенного ограничения
-// уникальности (SQLSTATE 23505) или пустую строку.
+// uniqueViolationConstraint returns the name of the violated uniqueness
+// constraint (SQLSTATE 23505) or an empty string.
 func uniqueViolationConstraint(err error) string {
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {

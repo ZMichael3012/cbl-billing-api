@@ -24,7 +24,7 @@ import (
 	"github.com/cbl/cbl-billing-api/internal/storage"
 )
 
-// setupBillingDB поднимает PostgreSQL и применяет миграции billing-api.
+// setupBillingDB starts PostgreSQL and applies the billing-api migrations.
 func setupBillingDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	ctx := context.Background()
@@ -50,7 +50,7 @@ func setupBillingDB(t *testing.T) *gorm.DB {
 	return db
 }
 
-// newKey собирает доменную запись активного ключа со случайным токеном.
+// newKey builds a domain record of an active key with a random token.
 func newKey(t *testing.T, merchantID string, status domain.Status) (domain.APIKey, string) {
 	t.Helper()
 	token, prefix, hash, err := domain.GenerateToken()
@@ -93,20 +93,20 @@ func TestIntegrationAPIKeyLifecycle(t *testing.T) {
 	_, err = repo.FindAPIKeyByRef(ctx, "cbl_v1_deadbeef00_x")
 	require.ErrorIs(t, err, storage.ErrNotFound)
 
-	// Ротация: active -> retiring, новый active; прежний retiring отзывается.
+	// Rotation: active -> retiring, a new active; the previous retiring is revoked.
 	rotated, _ := newKey(t, "m-1", domain.StatusActive)
 	graceUntil := time.Now().UTC().Add(24 * time.Hour)
 	revokedRetiring, retiredActive, err := repo.RotateAPIKeys(ctx, "m-1", rotated, graceUntil)
 	require.NoError(t, err)
-	assert.Empty(t, revokedRetiring, "прежнего retiring не было")
-	assert.Equal(t, key.ID, retiredActive.ID, "переведенный в retiring active возвращается для инвалидации")
+	assert.Empty(t, revokedRetiring, "there was no previous retiring key")
+	assert.Equal(t, key.ID, retiredActive.ID, "the active key moved to retiring is returned for invalidation")
 
 	retired, err := repo.FindAPIKeyByRef(ctx, key.Prefix)
 	require.NoError(t, err)
 	assert.Equal(t, domain.StatusRetiring, retired.Status)
 	require.NotNil(t, retired.ExpiresAt)
 
-	// Вторая ротация отзывает прежний retiring и возвращает его для tombstone.
+	// The second rotation revokes the previous retiring key and returns it for the tombstone.
 	second, _ := newKey(t, "m-1", domain.StatusActive)
 	revokedRetiring, retiredActive, err = repo.RotateAPIKeys(ctx, "m-1", second, graceUntil)
 	require.NoError(t, err)
@@ -118,19 +118,19 @@ func TestIntegrationAPIKeyLifecycle(t *testing.T) {
 	assert.Equal(t, domain.StatusRevoked, revoked.Status)
 	require.NotNil(t, revoked.RevokedAt)
 
-	// Ротация без активного ключа - конфликт.
+	// Rotation without an active key is a conflict.
 	_, _, err = repo.RotateAPIKeys(ctx, "m-2", second, graceUntil)
 	require.ErrorIs(t, err, storage.ErrStatusConflict)
 
-	// Отзыв идемпотентен.
+	// Revocation is idempotent.
 	revokedAgain, err := repo.RevokeAPIKey(ctx, second.Prefix)
 	require.NoError(t, err)
 	assert.Equal(t, domain.StatusRevoked, revokedAgain.Status)
 	same, err := repo.RevokeAPIKey(ctx, second.Prefix)
 	require.NoError(t, err)
-	assert.Equal(t, revokedAgain.RevokedAt, same.RevokedAt, "повторный отзыв не меняет время")
+	assert.Equal(t, revokedAgain.RevokedAt, same.RevokedAt, "a repeated revoke does not change the time")
 
-	// Список от новых к старым.
+	// The list is ordered from newest to oldest.
 	keys, err := repo.ListAPIKeysByMerchant(ctx, "m-1")
 	require.NoError(t, err)
 	require.Len(t, keys, 3)
@@ -145,12 +145,12 @@ func TestIntegrationAPIKeyUniqueConstraints(t *testing.T) {
 	first, _ := newKey(t, "m-1", domain.StatusActive)
 	require.NoError(t, repo.CreateAPIKey(ctx, first))
 
-	// Второй активный ключ запрещен частичным уникальным индексом.
+	// A second active key is forbidden by the partial unique index.
 	second, _ := newKey(t, "m-1", domain.StatusActive)
 	err := repo.CreateAPIKey(ctx, second)
 	require.ErrorIs(t, err, storage.ErrActiveKeyExists)
 
-	// Дубликат token_hash запрещен даже в другом состоянии.
+	// A duplicate token_hash is forbidden even in another state.
 	duplicateHash := second
 	duplicateHash.Status = domain.StatusRetiring
 	until := time.Now().UTC().Add(time.Hour)
@@ -159,13 +159,13 @@ func TestIntegrationAPIKeyUniqueConstraints(t *testing.T) {
 	err = repo.CreateAPIKey(ctx, duplicateHash)
 	require.ErrorIs(t, err, storage.ErrDuplicateKey)
 
-	// Дубликат prefix запрещен.
+	// A duplicate prefix is forbidden.
 	duplicatePrefix := second
 	duplicatePrefix.Prefix = first.Prefix
 	err = repo.CreateAPIKey(ctx, duplicatePrefix)
 	require.ErrorIs(t, err, storage.ErrDuplicateKey)
 
-	// Второй retiring ключ запрещен.
+	// A second retiring key is forbidden.
 	retiring, _ := newKey(t, "m-2", domain.StatusRetiring)
 	require.NoError(t, repo.CreateAPIKey(ctx, retiring))
 	retiring2, _ := newKey(t, "m-2", domain.StatusRetiring)
@@ -181,18 +181,18 @@ func TestIntegrationAPIKeyGuard(t *testing.T) {
 	key, _ := newKey(t, "m-1", domain.StatusActive)
 	require.NoError(t, repo.CreateAPIKey(ctx, key))
 
-	// Неизменяемые поля строки.
+	// Immutable row fields.
 	result := db.Model(&storage.APIKey{}).Where("id = ?", key.ID).Update("merchant_id", "m-2")
 	require.Error(t, result.Error)
 	assert.Contains(t, result.Error.Error(), "immutable fields cannot change")
 
-	// Смена lifecycle-полей без смены статуса запрещена (last_used_at обновляется).
+	// Changing lifecycle fields without a status change is forbidden (last_used_at is updated).
 	result = db.Model(&storage.APIKey{}).Where("id = ?", key.ID).
 		Updates(map[string]any{"expires_at": time.Now().UTC().Add(time.Hour)})
 	require.Error(t, result.Error)
 	assert.Contains(t, result.Error.Error(), "lifecycle fields require status change")
 
-	// Недопустимый переход пары статусов: retiring -> active запрещен.
+	// Invalid status pair transition: retiring -> active is forbidden.
 	retiringKey, _ := newKey(t, "m-guard", domain.StatusRetiring)
 	require.NoError(t, repo.CreateAPIKey(ctx, retiringKey))
 	result = db.Model(&storage.APIKey{}).Where("id = ?", retiringKey.ID).
@@ -200,7 +200,7 @@ func TestIntegrationAPIKeyGuard(t *testing.T) {
 	require.Error(t, result.Error)
 	assert.Contains(t, result.Error.Error(), "transition retiring -> active is forbidden")
 
-	// Терминальность revoked: даже last_used_at не меняется.
+	// revoked is terminal: even last_used_at does not change.
 	require.NoError(t, repo.CreateAPIKey(ctx, mustActive(t, "m-3")))
 	revoked, err := repo.RevokeAPIKey(ctx, key.Prefix)
 	require.NoError(t, err)
@@ -209,7 +209,7 @@ func TestIntegrationAPIKeyGuard(t *testing.T) {
 	require.Error(t, result.Error)
 	assert.Contains(t, result.Error.Error(), "revoked key is immutable")
 
-	// Обновление last_used_at активного ключа разрешено.
+	// Updating last_used_at of an active key is allowed.
 	active4, _ := newKey(t, "m-4", domain.StatusActive)
 	require.NoError(t, repo.CreateAPIKey(ctx, active4))
 	require.NoError(t, repo.TouchAPIKeyLastUsed(ctx, active4.ID))
@@ -217,22 +217,23 @@ func TestIntegrationAPIKeyGuard(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, loaded.LastUsedAt)
 
-	// Отозванный ключ не трогается best-effort обновлением.
+	// A revoked key is not touched by the best-effort update.
 	require.NoError(t, repo.TouchAPIKeyLastUsed(ctx, key.ID))
 	loaded, err = repo.FindAPIKeyByRef(ctx, key.ID)
 	require.NoError(t, err)
 	assert.Nil(t, loaded.LastUsedAt)
 }
 
-// mustActive создает активный ключ для мерчанта.
+// mustActive creates an active key for the merchant.
 func mustActive(t *testing.T, merchantID string) domain.APIKey {
 	t.Helper()
 	key, _ := newKey(t, merchantID, domain.StatusActive)
 	return key
 }
 
-// TestIntegrationAPIKeyExpiresValid проверяет, что срок retiring вычисляется
-// БД по now() сервера, а удаление и очистка таблицы запрещены.
+// TestIntegrationAPIKeyExpiresValid checks that the retiring validity is
+// computed by the DB from the server now(), and that row deletion and table
+// truncation are forbidden.
 func TestIntegrationAPIKeyExpiresValid(t *testing.T) {
 	db := setupBillingDB(t)
 	repo := storage.NewRepository(db)
@@ -242,7 +243,7 @@ func TestIntegrationAPIKeyExpiresValid(t *testing.T) {
 	require.NoError(t, repo.CreateAPIKey(ctx, active))
 	loaded, err := repo.FindAPIKeyByRef(ctx, active.ID)
 	require.NoError(t, err)
-	assert.True(t, loaded.ExpiresValid, "активный ключ действителен")
+	assert.True(t, loaded.ExpiresValid, "the active key is valid")
 
 	expired, _ := newKey(t, "m-exp2", domain.StatusRetiring)
 	past := time.Now().UTC().Add(-time.Hour)
@@ -250,7 +251,7 @@ func TestIntegrationAPIKeyExpiresValid(t *testing.T) {
 	require.NoError(t, repo.CreateAPIKey(ctx, expired))
 	loaded, err = repo.FindAPIKeyByRef(ctx, expired.ID)
 	require.NoError(t, err)
-	assert.False(t, loaded.ExpiresValid, "истекший retiring недействителен")
+	assert.False(t, loaded.ExpiresValid, "the expired retiring key is invalid")
 
 	future, _ := newKey(t, "m-exp3", domain.StatusRetiring)
 	until := time.Now().UTC().Add(time.Hour)
@@ -258,9 +259,9 @@ func TestIntegrationAPIKeyExpiresValid(t *testing.T) {
 	require.NoError(t, repo.CreateAPIKey(ctx, future))
 	loaded, err = repo.FindAPIKeyByRef(ctx, future.ID)
 	require.NoError(t, err)
-	assert.True(t, loaded.ExpiresValid, "retiring в окне действителен")
+	assert.True(t, loaded.ExpiresValid, "the retiring key within the window is valid")
 
-	// Удаление и TRUNCATE запрещены: след отзыва не теряется.
+	// DELETE and TRUNCATE are forbidden: the revocation trail is not lost.
 	result := db.Exec("DELETE FROM api_keys WHERE id = ?", active.ID)
 	require.Error(t, result.Error)
 	assert.Contains(t, result.Error.Error(), "DELETE is forbidden")

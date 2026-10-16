@@ -1,6 +1,6 @@
-// reportingstub - e2e-сервис тестовой отчетности для compose-стенда
-// billing-api: gRPC ReportingService с детерминированными фикстурами
-// (в продуктовый образ не входит).
+// reportingstub is the e2e test reporting service for the billing-api compose
+// stand: a gRPC ReportingService with deterministic fixtures (not included in
+// the production image).
 package main
 
 import (
@@ -13,7 +13,7 @@ import (
 	"github.com/cbl/cbl-billing-api/test/reportingstub"
 )
 
-// main поднимает тестовый ReportingService до сигнала.
+// main starts the test ReportingService until a signal is received.
 func main() {
 	addr := os.Getenv("STUB_GRPC_ADDR")
 	if addr == "" {

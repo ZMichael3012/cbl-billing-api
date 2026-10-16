@@ -14,10 +14,10 @@ import (
 	"github.com/cbl/cbl-billing-api/internal/storage"
 )
 
-// fakeStore подменяет хранилище ключей и фиксирует вызовы.
+// fakeStore replaces the key storage and records calls.
 type fakeStore struct {
-	keys          map[string]domain.APIKey // по token_hash hex
-	byRef         map[string]domain.APIKey // по id и prefix
+	keys          map[string]domain.APIKey // by token_hash hex
+	byRef         map[string]domain.APIKey // by id and prefix
 	createErr     error
 	findErr       error
 	rotateErr     error
@@ -28,7 +28,7 @@ type fakeStore struct {
 	revokeReturns domain.APIKey
 }
 
-// newFakeStore создает пустое хранилище.
+// newFakeStore creates an empty storage.
 func newFakeStore() *fakeStore {
 	return &fakeStore{
 		keys:  map[string]domain.APIKey{},
@@ -36,7 +36,7 @@ func newFakeStore() *fakeStore {
 	}
 }
 
-// add кладет ключ во все индексы фейка.
+// add puts a key into all fake indexes.
 func (s *fakeStore) add(key domain.APIKey) {
 	s.keys[fmt.Sprintf("%x", key.TokenHash)] = key
 	s.byRef[key.ID] = key
@@ -50,7 +50,7 @@ func (s *fakeStore) CreateAPIKey(_ context.Context, key domain.APIKey) error {
 	if _, exists := s.keys[fmt.Sprintf("%x", key.TokenHash)]; exists {
 		return storage.ErrDuplicateKey
 	}
-	// Частичный уникальный индекс one_active: второй активный ключ запрещен.
+	// The one_active partial unique index: a second active key is forbidden.
 	if key.Status == domain.StatusActive {
 		for _, existing := range s.keys {
 			if existing.MerchantID == key.MerchantID && existing.Status == domain.StatusActive {
@@ -62,7 +62,7 @@ func (s *fakeStore) CreateAPIKey(_ context.Context, key domain.APIKey) error {
 	return nil
 }
 
-// reindex пересобирает поиск по id и prefix после мутаций статусов.
+// reindex rebuilds the lookup by id and prefix after status mutations.
 func (s *fakeStore) reindex() {
 	s.byRef = map[string]domain.APIKey{}
 	for _, key := range s.keys {
@@ -165,7 +165,7 @@ func (s *fakeStore) TouchAPIKeyLastUsed(_ context.Context, id string) error {
 	return nil
 }
 
-// fakeCache подменяет Redis-кэш проверки.
+// fakeCache replaces the Redis verification cache.
 type fakeCache struct {
 	values    map[string]string
 	getErr    error
@@ -180,7 +180,7 @@ type fakeCache struct {
 	getCalled int
 }
 
-// newFakeCache создает пустой кэш.
+// newFakeCache creates an empty cache.
 func newFakeCache() *fakeCache {
 	return &fakeCache{values: map[string]string{}}
 }
@@ -228,7 +228,7 @@ func (c *fakeCache) Del(_ context.Context, keys ...string) error {
 	return nil
 }
 
-// newTestService собирает сервис с фейками и фиксированными часами.
+// newTestService builds the service with fakes and a fixed clock.
 func newTestService(t *testing.T, store KeyStore, cache KeyCache) (*APIKeys, time.Time) {
 	t.Helper()
 	now := time.Date(2026, 10, 15, 12, 0, 0, 0, time.UTC)
@@ -248,14 +248,14 @@ func TestNewAPIKeysConfig(t *testing.T) {
 	base := KeysConfig{CacheTTL: time.Minute, DenyTTL: time.Minute, RotationGrace: time.Hour}
 
 	_, err := NewAPIKeys(nil, nil, nil, base)
-	require.Error(t, err, "хранилище обязательно")
+	require.Error(t, err, "storage is required")
 
 	cases := map[string]KeysConfig{
-		"grace меньше минимума":  {CacheTTL: time.Minute, DenyTTL: time.Minute, RotationGrace: time.Minute},
-		"cache ttl ноль":         {CacheTTL: 0, DenyTTL: time.Minute, RotationGrace: time.Hour},
-		"cache ttl больше часа":  {CacheTTL: 2 * time.Hour, DenyTTL: time.Minute, RotationGrace: time.Hour},
-		"deny ttl больше минуты": {CacheTTL: time.Minute, DenyTTL: 2 * time.Minute, RotationGrace: time.Hour},
-		"deny ttl отрицательный": {CacheTTL: time.Minute, DenyTTL: -time.Second, RotationGrace: time.Hour},
+		"grace below minimum":     {CacheTTL: time.Minute, DenyTTL: time.Minute, RotationGrace: time.Minute},
+		"cache ttl zero":          {CacheTTL: 0, DenyTTL: time.Minute, RotationGrace: time.Hour},
+		"cache ttl above an hour": {CacheTTL: 2 * time.Hour, DenyTTL: time.Minute, RotationGrace: time.Hour},
+		"deny ttl above a minute": {CacheTTL: time.Minute, DenyTTL: 2 * time.Minute, RotationGrace: time.Hour},
+		"deny ttl negative":       {CacheTTL: time.Minute, DenyTTL: -time.Second, RotationGrace: time.Hour},
 	}
 	for name, cfg := range cases {
 		_, err := NewAPIKeys(newFakeStore(), nil, nil, cfg)
@@ -278,7 +278,7 @@ func TestIssueKey(t *testing.T) {
 	require.NoError(t, err)
 
 	_, _, err = service.Issue(context.Background(), "m-1")
-	require.ErrorIs(t, err, domain.ErrKeyAlreadyActive, "второй активный ключ запрещен")
+	require.ErrorIs(t, err, domain.ErrKeyAlreadyActive, "a second active key is forbidden")
 
 	_, _, err = service.Issue(context.Background(), "bad ref!")
 	require.ErrorIs(t, err, domain.ErrInvalidMerchantID)
@@ -301,14 +301,14 @@ func TestRotateKey(t *testing.T) {
 
 	stored, err := store.FindAPIKeyByRef(context.Background(), oldKey.Prefix)
 	require.NoError(t, err)
-	assert.Equal(t, domain.StatusRetiring, stored.Status, "прежний ключ в окне перекрытия")
+	assert.Equal(t, domain.StatusRetiring, stored.Status, "the previous key is within the overlap window")
 	require.NotNil(t, stored.ExpiresAt)
 
 	_, err = domain.ParseToken(token)
 	require.NoError(t, err)
 
-	// Вторая ротация отзывает прежний retiring и ставит tombstone в кэше,
-	// чтобы поздняя запись успешной проверки не воскресила ключ.
+	// The second rotation revokes the previous retiring key and sets a tombstone
+	// in the cache so that a later successful verification record does not revive the key.
 	oldCacheKey := cacheKeyPrefix + fmt.Sprintf("%x", oldKey.TokenHash)
 	cache.values[oldCacheKey] = "ok:m-1"
 	_, _, err = service.Rotate(context.Background(), "m-1")
@@ -316,7 +316,7 @@ func TestRotateKey(t *testing.T) {
 	stored, err = store.FindAPIKeyByRef(context.Background(), oldKey.Prefix)
 	require.NoError(t, err)
 	assert.Equal(t, domain.StatusRevoked, stored.Status)
-	assert.Equal(t, cacheValueDeny, cache.values[oldCacheKey], "tombstone отозванного retiring")
+	assert.Equal(t, cacheValueDeny, cache.values[oldCacheKey], "the tombstone of the revoked retiring key")
 	assert.Equal(t, 5*time.Minute, cache.lastTTL)
 }
 
@@ -342,9 +342,9 @@ func TestRevokeKeyIdempotent(t *testing.T) {
 	revoked, err := service.Revoke(context.Background(), key.Prefix)
 	require.NoError(t, err)
 	assert.Equal(t, domain.StatusRevoked, revoked.Status)
-	assert.Contains(t, cache.deleted, cacheKeyPrefix+fmt.Sprintf("%x", key.TokenHash), "DEL при отзыве")
+	assert.Contains(t, cache.deleted, cacheKeyPrefix+fmt.Sprintf("%x", key.TokenHash), "DEL on revocation")
 	cacheKey := cacheKeyPrefix + fmt.Sprintf("%x", key.TokenHash)
-	assert.Equal(t, cacheValueDeny, cache.values[cacheKey], "tombstone отозванного ключа")
+	assert.Equal(t, cacheValueDeny, cache.values[cacheKey], "the tombstone of the revoked key")
 
 	again, err := service.Revoke(context.Background(), key.Prefix)
 	require.NoError(t, err)
@@ -354,7 +354,7 @@ func TestRevokeKeyIdempotent(t *testing.T) {
 	require.ErrorIs(t, err, domain.ErrKeyNotFound)
 }
 
-// TestRevokeWithoutCache проверяет работу без Redis: отзыв не паникует.
+// TestRevokeWithoutCache verifies operation without Redis: revocation does not panic.
 func TestRevokeWithoutCache(t *testing.T) {
 	t.Parallel()
 
@@ -383,7 +383,7 @@ func TestVerifyCacheHit(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "m-1", result.MerchantID)
 	assert.True(t, result.CacheHit)
-	assert.Empty(t, store.touched, "хит кэша не трогает БД")
+	assert.Empty(t, store.touched, "a cache hit does not touch the database")
 
 	cache.values[cacheKeyPrefix+fmt.Sprintf("%x", hash)] = "deny"
 	_, err = service.Verify(context.Background(), token)
@@ -403,20 +403,20 @@ func TestVerifyPostgresFallback(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "m-1", result.MerchantID)
 	assert.False(t, result.CacheHit)
-	assert.Equal(t, []string{key.ID}, store.touched, "успех обновляет last_used_at")
+	assert.Equal(t, []string{key.ID}, store.touched, "a success updates last_used_at")
 	cacheKey := cacheKeyPrefix + fmt.Sprintf("%x", domain.HashToken(token))
-	assert.Equal(t, "ok:m-1", cache.values[cacheKey], "успех кэшируется")
+	assert.Equal(t, "ok:m-1", cache.values[cacheKey], "a success is cached")
 	assert.Equal(t, 5*time.Minute, cache.lastNXTTL)
 
-	// Ошибка чтения кэша не ослабляет проверку: решает PostgreSQL.
+	// A cache read error does not weaken verification: PostgreSQL decides.
 	cache.getErr = errors.New("redis down")
 	result, err = service.Verify(context.Background(), token)
 	require.NoError(t, err)
 	assert.Equal(t, "m-1", result.MerchantID)
 }
 
-// TestVerifyCacheMalformedValue проверяет деградацию при испорченном значении
-// кэша: проверка уходит в PostgreSQL.
+// TestVerifyCacheMalformedValue verifies degradation with a malformed cache
+// value: verification falls through to PostgreSQL.
 func TestVerifyCacheMalformedValue(t *testing.T) {
 	t.Parallel()
 
@@ -440,19 +440,20 @@ func TestVerifyRejections(t *testing.T) {
 	cache := newFakeCache()
 	service, now := newTestService(t, store, cache)
 
-	// Неизвестный ключ: отказ и негативный кэш.
+	// Unknown key: rejection and negative cache.
 	unknown, _, _, err := domain.GenerateToken()
 	require.NoError(t, err)
 	_, err = service.Verify(context.Background(), unknown)
 	require.ErrorIs(t, err, domain.ErrUnauthorized)
 	assert.Equal(t, cacheValueDeny, cache.values[cacheKeyPrefix+fmt.Sprintf("%x", domain.HashToken(unknown))])
 
-	// Битая форма не трогает ни кэш, ни БД.
+	// A malformed shape touches neither the cache nor the database.
 	_, err = service.Verify(context.Background(), "not-a-token")
 	require.ErrorIs(t, err, domain.ErrUnauthorized)
 
-	// Retiring в окне перекрытия действителен, после - нет: срок вычисляет БД
-	// (ExpiresValid), локальные часы процесса на решение не влияют.
+	// A retiring key within the overlap window is valid, after it is not: the
+	// deadline is computed by the database (ExpiresValid), local process clocks
+	// do not affect the decision.
 	key, token, err := service.Issue(context.Background(), "m-ret")
 	require.NoError(t, err)
 	cacheKey := cacheKeyPrefix + fmt.Sprintf("%x", key.TokenHash)
@@ -465,15 +466,15 @@ func TestVerifyRejections(t *testing.T) {
 	result, err := service.Verify(context.Background(), token)
 	require.NoError(t, err)
 	assert.Equal(t, "m-ret", result.MerchantID)
-	assert.Equal(t, 2*time.Minute, cache.lastNXTTL, "TTL позитивного кэша ограничен окном retiring")
+	assert.Equal(t, 2*time.Minute, cache.lastNXTTL, "the positive cache TTL is limited by the retiring window")
 
 	key.ExpiresValid = false
 	store.keys[fmt.Sprintf("%x", key.TokenHash)] = key
 	delete(cache.values, cacheKey)
 	_, err = service.Verify(context.Background(), token)
-	require.ErrorIs(t, err, domain.ErrUnauthorized, "retiring истек")
+	require.ErrorIs(t, err, domain.ErrUnauthorized, "retiring has expired")
 
-	// Отозванный ключ - отказ.
+	// A revoked key is rejected.
 	key.Status = domain.StatusRevoked
 	store.keys[fmt.Sprintf("%x", key.TokenHash)] = key
 	delete(cache.values, cacheKey)
@@ -497,5 +498,5 @@ func TestVerifyDenyCacheDisabled(t *testing.T) {
 	require.NoError(t, err)
 	_, err = service.Verify(context.Background(), unknown)
 	require.ErrorIs(t, err, domain.ErrUnauthorized)
-	assert.Empty(t, cache.setCalls, "нулевой TTL выключает запись негативного кэша")
+	assert.Empty(t, cache.setCalls, "a zero TTL disables negative cache writes")
 }

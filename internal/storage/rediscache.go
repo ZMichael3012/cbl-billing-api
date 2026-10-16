@@ -9,17 +9,17 @@ import (
 	"gorm.io/gorm"
 )
 
-// Repository читает и изменяет данные сервиса в PostgreSQL.
+// Repository reads and modifies the service data in PostgreSQL.
 type Repository struct {
 	db *gorm.DB
 }
 
-// NewRepository создает Repository.
+// NewRepository creates a Repository.
 func NewRepository(db *gorm.DB) *Repository {
 	return &Repository{db: db}
 }
 
-// Ping проверяет доступность PostgreSQL (readyz).
+// Ping checks PostgreSQL availability (readyz).
 func (r *Repository) Ping(ctx context.Context) error {
 	sqlDB, err := r.db.DB()
 	if err != nil {
@@ -31,15 +31,16 @@ func (r *Repository) Ping(ctx context.Context) error {
 	return nil
 }
 
-// RedisCache реализует кэш проверки ключей на Redis: значения контракта с
-// периметром (7.5) - ok:<merchant_id> или deny, ключ - apikey:v1:<hash>.
+// RedisCache implements the key verification cache on Redis: the perimeter
+// contract values (7.5) are ok:<merchant_id> or deny, the key is
+// apikey:v1:<hash>.
 type RedisCache struct {
 	client *redis.Client
 }
 
-// NewRedisCache создает кэш с короткими таймаутами горячего пути проверки:
-// недоступный Redis деградирует к PostgreSQL за ~200-300 мс, а не за секунды
-// (бюджет деградации спеки 7.2).
+// NewRedisCache creates a cache with short timeouts for the verification hot
+// path: an unreachable Redis degrades to PostgreSQL in ~200-300 ms instead of
+// seconds (the degradation budget of spec 7.2).
 func NewRedisCache(addr string) (*RedisCache, error) {
 	client := redis.NewClient(&redis.Options{
 		Addr:                  addr,
@@ -52,12 +53,12 @@ func NewRedisCache(addr string) (*RedisCache, error) {
 	return &RedisCache{client: client}, nil
 }
 
-// Ping проверяет доступность Redis.
+// Ping checks Redis availability.
 func (c *RedisCache) Ping(ctx context.Context) error {
 	return c.client.Ping(ctx).Err()
 }
 
-// Get возвращает значение ключа; found=false при промахе.
+// Get returns the key value; found=false on a miss.
 func (c *RedisCache) Get(ctx context.Context, key string) (string, bool, error) {
 	value, err := c.client.Get(ctx, key).Result()
 	if err == redis.Nil {
@@ -69,18 +70,18 @@ func (c *RedisCache) Get(ctx context.Context, key string) (string, bool, error) 
 	return value, true, nil
 }
 
-// Set сохраняет значение с TTL (идемпотентная перезапись).
+// Set stores the value with a TTL (idempotent overwrite).
 func (c *RedisCache) Set(ctx context.Context, key, value string, ttl time.Duration) error {
 	return c.client.Set(ctx, key, value, ttl).Err()
 }
 
-// SetNX сохраняет значение только при отсутствии ключа: tombstone отзыва не
-// перезаписывается поздней записью успешной проверки.
+// SetNX stores the value only if the key is absent: a revocation tombstone is
+// not overwritten by a later successful verification write.
 func (c *RedisCache) SetNX(ctx context.Context, key, value string, ttl time.Duration) error {
 	return c.client.SetNX(ctx, key, value, ttl).Err()
 }
 
-// Del удаляет ключи (инвалидация при ротации и отзыве).
+// Del deletes keys (invalidation on rotation and revocation).
 func (c *RedisCache) Del(ctx context.Context, keys ...string) error {
 	if len(keys) == 0 {
 		return nil
@@ -88,7 +89,7 @@ func (c *RedisCache) Del(ctx context.Context, keys ...string) error {
 	return c.client.Del(ctx, keys...).Err()
 }
 
-// Close закрывает соединение с Redis.
+// Close closes the Redis connection.
 func (c *RedisCache) Close() error {
 	return c.client.Close()
 }

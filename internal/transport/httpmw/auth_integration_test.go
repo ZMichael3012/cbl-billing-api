@@ -31,8 +31,8 @@ import (
 	"github.com/cbl/cbl-billing-api/internal/usecase"
 )
 
-// setupAuthStand поднимает PostgreSQL и Redis, собирает сервис ключей и
-// маршрут-пробу за middleware.
+// setupAuthStand starts PostgreSQL and Redis, builds the key service and a
+// probe route behind the middleware.
 func setupAuthStand(t *testing.T) (*usecase.APIKeys, *gin.Engine, *redis.Client) {
 	t.Helper()
 	ctx := context.Background()
@@ -95,7 +95,7 @@ func setupAuthStand(t *testing.T) (*usecase.APIKeys, *gin.Engine, *redis.Client)
 	return keys, router, redis.NewClient(&redis.Options{Addr: redisAddr})
 }
 
-// doProbe выполняет запрос к маршруту-пробе.
+// doProbe performs a request to the probe route.
 func doProbe(router *gin.Engine, token string) *httptest.ResponseRecorder {
 	request := httptest.NewRequest(http.MethodGet, "/v1/probe", nil)
 	if token != "" {
@@ -113,7 +113,7 @@ func TestIntegrationAuthMiddlewareWithRedis(t *testing.T) {
 	key, token, err := keys.Issue(ctx, "m-1")
 	require.NoError(t, err)
 
-	// Первый запрос: PostgreSQL, кэш заполняется.
+	// First request: PostgreSQL, the cache is populated.
 	recorder := doProbe(router, token)
 	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
 	var body map[string]string
@@ -125,35 +125,35 @@ func TestIntegrationAuthMiddlewareWithRedis(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "ok:m-1", stored)
 
-	// Второй запрос обслуживается кэшем.
+	// The second request is served from the cache.
 	recorder = doProbe(router, token)
 	require.Equal(t, http.StatusOK, recorder.Code)
 
-	// Ротация: оба ключа валидны, прежний - retiring.
+	// Rotation: both keys are valid, the previous one is retiring.
 	_, newToken, err := keys.Rotate(ctx, "m-1")
 	require.NoError(t, err)
-	assert.Equal(t, http.StatusOK, doProbe(router, token).Code, "старый ключ в окне перекрытия")
+	assert.Equal(t, http.StatusOK, doProbe(router, token).Code, "the old key is within the overlap window")
 	assert.Equal(t, http.StatusOK, doProbe(router, newToken).Code)
 
-	// Отзыв старого ключа: в кэше tombstone deny, запрос отклоняется.
+	// Revocation of the old key: a deny tombstone is in the cache, the request is rejected.
 	_, err = keys.Revoke(ctx, key.Prefix)
 	require.NoError(t, err)
 	stored, err = redisClient.Get(ctx, cacheKey).Result()
-	require.NoError(t, err, "tombstone отзыва вместо простого DEL")
+	require.NoError(t, err, "a revocation tombstone instead of a plain DEL")
 	assert.Equal(t, "deny", stored)
 	recorder = doProbe(router, token)
 	assert.Equal(t, http.StatusUnauthorized, recorder.Code)
 
-	// Неизвестный ключ отвечает 401 и не раскрывает причину.
+	// An unknown key responds 401 and does not reveal the reason.
 	unknown, _, _, err := domain.GenerateToken()
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusUnauthorized, doProbe(router, unknown).Code)
 
-	// Новый ключ продолжает работать.
+	// The new key keeps working.
 	assert.Equal(t, http.StatusOK, doProbe(router, newToken).Code)
 }
 
-// redisCacheKey вычисляет ключ кэша проверки для токена.
+// redisCacheKey computes the verification cache key for a token.
 func redisCacheKey(t *testing.T, token string) string {
 	t.Helper()
 	return fmt.Sprintf("apikey:v1:%x", domain.HashToken(token))

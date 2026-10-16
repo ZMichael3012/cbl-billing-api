@@ -1,6 +1,6 @@
-// Пакет reportingstub поднимает тестовый ReportingService (gRPC) для
-// интеграционных тестов и e2e сервиса billing-api: отвечает детерминированной
-// страницей и эхом параметров запроса (в продукт не входит).
+// Package reportingstub starts a test ReportingService (gRPC) for the
+// integration tests and e2e of the billing-api service: it responds with a
+// deterministic page and echoes the request parameters (not part of the product).
 package reportingstub
 
 import (
@@ -17,7 +17,7 @@ import (
 	reportingv1 "github.com/cbl/cbl-protos/gen/go/billing/reporting/v1"
 )
 
-// Server описывает тестовый ReportingService.
+// Server describes the test ReportingService.
 type Server struct {
 	reportingv1.UnimplementedReportingServiceServer
 
@@ -27,13 +27,13 @@ type Server struct {
 	grpc     *grpc.Server
 }
 
-// New собирает пустой тестовый сервер.
+// New builds an empty test server.
 func New() *Server {
 	return &Server{}
 }
 
-// Start поднимает gRPC-сервер на адресе (пусто - случайный порт localhost) и
-// возвращает фактический адрес для подключения.
+// Start starts the gRPC server on the address (empty means a random localhost
+// port) and returns the actual address for connection.
 func (s *Server) Start(addr string) (string, error) {
 	if addr == "" {
 		addr = "127.0.0.1:0"
@@ -52,7 +52,7 @@ func (s *Server) Start(addr string) (string, error) {
 	return listener.Addr().String(), nil
 }
 
-// Stop останавливает сервер и освобождает порт.
+// Stop stops the server and releases the port.
 func (s *Server) Stop() {
 	s.mu.Lock()
 	grpcSrv, listener := s.grpc, s.listener
@@ -66,16 +66,16 @@ func (s *Server) Stop() {
 	}
 }
 
-// Requests возвращает копию полученных запросов (проверка параметров).
+// Requests returns a copy of the received requests (parameter checks).
 func (s *Server) Requests() []*reportingv1.QueryRequest {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]*reportingv1.QueryRequest(nil), s.requests...)
 }
 
-// Query отдает страницу фикстуры: payments - одна строка с эхом параметров
-// запроса (merchant_id, limit, cursor, group_by); limit=1 и пустой курсор
-// включают пагинацию; default - NotFound (проверка маппинга 404).
+// Query serves the fixture page: payments - a single row echoing the request
+// parameters (merchant_id, limit, cursor, group_by); limit=1 and an empty
+// cursor enable pagination; default - NotFound (404 mapping check).
 func (s *Server) Query(_ context.Context, request *reportingv1.QueryRequest) (*reportingv1.QueryResponse, error) {
 	s.mu.Lock()
 	s.requests = append(s.requests, request)

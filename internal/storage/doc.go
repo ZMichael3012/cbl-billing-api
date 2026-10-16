@@ -1,3 +1,3 @@
-// Пакет storage содержит доступ к хранилищам сервиса billing-api:
-// GORM-репозитории, миграции и интеграцию с outbox/inbox.
+// Package storage contains the storage access of the billing-api service:
+// GORM repositories, migrations and the outbox/inbox integration.
 package storage

@@ -19,16 +19,16 @@ import (
 	"github.com/cbl/cbl-billing-api/test/reportingstub"
 )
 
-// reportsPage описывает разобранный ответ страницы отчета.
+// reportsPage describes the parsed report page response.
 type reportsPage struct {
 	Rows       []map[string]string `json:"rows"`
 	NextCursor string              `json:"next_cursor"`
 }
 
-// stubVerifier возвращает аутентифицированного мерчанта для любого токена.
+// stubVerifier returns an authenticated merchant for any token.
 func stubVerifier(context.Context, string) (string, error) { return "m-1", nil }
 
-// newRouter собирает роутер с маршрутом отчетов и стабом Reporting.
+// newRouter builds a router with the reports route and a Reporting stub.
 func newRouter(t *testing.T) (*gin.Engine, *reportingstub.Server, *reporting.Client) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
@@ -46,7 +46,7 @@ func newRouter(t *testing.T) (*gin.Engine, *reportingstub.Server, *reporting.Cli
 	return router, stub, client
 }
 
-// doGet выполняет GET с Bearer-заголовком и возвращает ответ.
+// doGet performs a GET with the Bearer header and returns the response.
 func doGet(router *gin.Engine, path string, authorized bool) *httptest.ResponseRecorder {
 	request := httptest.NewRequest(http.MethodGet, path, nil)
 	if authorized {
@@ -57,7 +57,7 @@ func doGet(router *gin.Engine, path string, authorized bool) *httptest.ResponseR
 	return recorder
 }
 
-// problemCode извлекает код problem+json из ответа.
+// problemCode extracts the problem+json code from the response.
 func problemCode(t *testing.T, recorder *httptest.ResponseRecorder) string {
 	t.Helper()
 	var problem map[string]any
@@ -66,8 +66,8 @@ func problemCode(t *testing.T, recorder *httptest.ResponseRecorder) string {
 	return code
 }
 
-// TestReportsProxySuccess проверяет проксирование отчета: мерчант берется из
-// токена, query-параметр merchant_id игнорируется, значения не преобразуются.
+// TestReportsProxySuccess verifies report proxying: the merchant is taken from
+// the token, the merchant_id query parameter is ignored, values are not transformed.
 func TestReportsProxySuccess(t *testing.T) {
 	router, stub, _ := newRouter(t)
 	recorder := doGet(router, "/v1/reports/payments?limit=5&merchant_id=hacker&group_by=", true)
@@ -76,7 +76,7 @@ func TestReportsProxySuccess(t *testing.T) {
 	var page reportsPage
 	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &page))
 	require.Len(t, page.Rows, 1)
-	assert.Equal(t, "m-1", page.Rows[0]["merchant_id"], "мерчант из токена, не из параметра")
+	assert.Equal(t, "m-1", page.Rows[0]["merchant_id"], "merchant from the token, not from the parameter")
 	assert.Equal(t, "100.000000", page.Rows[0]["expected_amount"])
 	assert.Equal(t, "5", page.Rows[0]["limit"])
 
@@ -85,17 +85,17 @@ func TestReportsProxySuccess(t *testing.T) {
 	assert.Equal(t, "m-1", requests[0].GetMerchantId())
 }
 
-// TestReportsProxyDefaultLimit проверяет дефолт лимита 20.
+// TestReportsProxyDefaultLimit verifies the default limit of 20.
 func TestReportsProxyDefaultLimit(t *testing.T) {
 	router, stub, _ := newRouter(t)
 	recorder := doGet(router, "/v1/reports/payments", true)
 	require.Equal(t, http.StatusOK, recorder.Code)
 	requests := stub.Requests()
 	require.Len(t, requests, 1)
-	assert.Equal(t, uint32(20), requests[0].GetLimit(), "лимит по умолчанию контракта")
+	assert.Equal(t, uint32(20), requests[0].GetLimit(), "contract default limit")
 }
 
-// TestReportsProxyPagination проверяет прозрачность курсора.
+// TestReportsProxyPagination verifies cursor transparency.
 func TestReportsProxyPagination(t *testing.T) {
 	router, _, _ := newRouter(t)
 	first := doGet(router, "/v1/reports/payments?limit=1", true)
@@ -109,12 +109,12 @@ func TestReportsProxyPagination(t *testing.T) {
 	var pageTwo reportsPage
 	require.NoError(t, json.Unmarshal(second.Body.Bytes(), &pageTwo))
 	require.Len(t, pageTwo.Rows, 1)
-	assert.Equal(t, "next-1", pageTwo.Rows[0]["cursor"], "курсор доходит до Reporting")
+	assert.Equal(t, "next-1", pageTwo.Rows[0]["cursor"], "the cursor reaches Reporting")
 	assert.Empty(t, pageTwo.NextCursor)
 }
 
-// TestReportsProxyNotFound проверяет 404 unknown_report_type на неизвестный
-// тип и на тип вне формы имени.
+// TestReportsProxyNotFound verifies 404 unknown_report_type for an unknown
+// type and for a type outside the name shape.
 func TestReportsProxyNotFound(t *testing.T) {
 	router, _, _ := newRouter(t)
 	recorder := doGet(router, "/v1/reports/invoices", true)
@@ -126,7 +126,7 @@ func TestReportsProxyNotFound(t *testing.T) {
 	assert.Equal(t, "unknown_report_type", problemCode(t, recorder))
 }
 
-// TestReportsProxyValidation проверяет 400 validation_failed на параметры.
+// TestReportsProxyValidation verifies 400 validation_failed for parameters.
 func TestReportsProxyValidation(t *testing.T) {
 	router, _, _ := newRouter(t)
 	cases := []struct {
@@ -150,8 +150,8 @@ func TestReportsProxyValidation(t *testing.T) {
 	}
 }
 
-// TestReportsProxyReportingValidation проверяет трансляцию InvalidArgument
-// Reporting в 400.
+// TestReportsProxyReportingValidation verifies translation of a Reporting
+// InvalidArgument into 400.
 func TestReportsProxyReportingValidation(t *testing.T) {
 	router, _, _ := newRouter(t)
 	recorder := doGet(router, "/v1/reports/violate", true)
@@ -159,7 +159,7 @@ func TestReportsProxyReportingValidation(t *testing.T) {
 	assert.Equal(t, "validation_failed", problemCode(t, recorder))
 }
 
-// TestReportsProxyUnauthorized проверяет 401 без ключа.
+// TestReportsProxyUnauthorized verifies 401 without a key.
 func TestReportsProxyUnauthorized(t *testing.T) {
 	router, _, _ := newRouter(t)
 	recorder := doGet(router, "/v1/reports/payments", false)
@@ -167,8 +167,8 @@ func TestReportsProxyUnauthorized(t *testing.T) {
 	assert.Equal(t, "unauthorized", problemCode(t, recorder))
 }
 
-// TestReportsProxyUnavailable проверяет 503 без клиента, при недоступном
-// Reporting и на его Unavailable.
+// TestReportsProxyUnavailable verifies 503 without a client, with Reporting
+// unavailable, and on its Unavailable.
 func TestReportsProxyUnavailable(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
@@ -190,7 +190,7 @@ func TestReportsProxyUnavailable(t *testing.T) {
 	assert.Equal(t, "service_unavailable", problemCode(t, recorder))
 }
 
-// TestReportsProxyEmptyPage проверяет пустую страницу без next_cursor.
+// TestReportsProxyEmptyPage verifies an empty page without next_cursor.
 func TestReportsProxyEmptyPage(t *testing.T) {
 	router, _, _ := newRouter(t)
 	recorder := doGet(router, "/v1/reports/empty", true)
@@ -198,8 +198,8 @@ func TestReportsProxyEmptyPage(t *testing.T) {
 	var payload map[string]any
 	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &payload))
 	rows, ok := payload["rows"].([]any)
-	require.True(t, ok, "rows - массив")
+	require.True(t, ok, "rows is an array")
 	assert.Empty(t, rows)
 	_, hasCursor := payload["next_cursor"]
-	assert.False(t, hasCursor, "пустой курсор не сериализуется")
+	assert.False(t, hasCursor, "an empty cursor is not serialized")
 }

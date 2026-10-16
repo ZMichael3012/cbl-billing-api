@@ -1,17 +1,17 @@
-# CBL-11.4 (часть BFF). Прокси /v1/reports в cbl-billing-api
+# CBL-11.4 (BFF part). Proxy /v1/reports in cbl-billing-api
 
-| Поле | Значение |
+| Field | Value |
 | :-- | :-- |
-| Задача | `CBL-11.4`, часть `cbl-billing-api` (сервис `Query` - в `cbl-reporting`) |
-| Версия контрактов | `cbl-protos@cf-3.1` (OpenAPI `/reports/{report_type}`), cf-3 (proto) |
-| Спека-источник | `cbl-reporting/.specs/CBL-11.4-reports-query.md` (FR-5, FR-6) |
-| Статус | done |
+| Task | `CBL-11.4`, part `cbl-billing-api` (the `Query` service is in `cbl-reporting`) |
+| Contract version | `cbl-protos@cf-3.1` (OpenAPI `/reports/{report_type}`), cf-3 (proto) |
+| Source spec | `cbl-reporting/.specs/CBL-11.4-reports-query.md` (FR-5, FR-6) |
+| Status | done |
 
-Тонкая обертка: полная спека задачи лежит в primary-репозитории `cbl-reporting`.
-Реализация в этом репозитории: `internal/reporting` (gRPC-клиент с классификацией
-ошибок), `internal/transport/reports.go` (маршрут в группе `Require`: `merchant_id`
-только из токена, параметры и problem+json коды), env `REPORTING_GRPC_ADDR`
-(опционален) и `REPORTING_TIMEOUT` (1 - 10 с), stub `test/reportingstub` и e2e
-`test/e2e/reports.ps1`, compose-сервис `reporting-stub`. Попутно исправлен красный
-с 7.3 unit-тест `TestIdempotencyCacheMalformedFallsToPostgres` (диагноз в журнале
-AGENTS сервиса).
+A thin wrapper: the full task spec lives in the primary repository `cbl-reporting`.
+The implementation in this repository: `internal/reporting` (gRPC client with error
+classification), `internal/transport/reports.go` (the route in the `Require` group: `merchant_id`
+only from the token, parameters and problem+json codes), env `REPORTING_GRPC_ADDR`
+(optional) and `REPORTING_TIMEOUT` (1 - 10 s), the stub `test/reportingstub` and e2e
+`test/e2e/reports.ps1`, the compose service `reporting-stub`. Along the way, the unit test
+`TestIdempotencyCacheMalformedFallsToPostgres` that had been red since 7.3 was fixed (the diagnosis is in the service
+AGENTS journal).

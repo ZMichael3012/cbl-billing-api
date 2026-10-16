@@ -1,4 +1,4 @@
-// main запускает HTTP-сервер billing-api платформы CBL.
+// main starts the billing-api HTTP server of the CBL platform.
 package main
 
 import (
@@ -27,7 +27,7 @@ import (
 	"github.com/cbl/cbl-billing-api/internal/usecase"
 )
 
-// Значения конфигурации по умолчанию.
+// Default configuration values.
 const (
 	defaultCacheTTL         = 5 * time.Minute
 	defaultDenyTTL          = time.Minute
@@ -37,8 +37,9 @@ const (
 	defaultReportingTimeout = 5 * time.Second
 )
 
-// main запускает сервис и завершает процесс ненулевым кодом при ошибке
-// инициализации (оркестратор должен видеть отказ, а не успешный выход).
+// main starts the service and exits the process with a non-zero code on an
+// initialization error (the orchestrator must see a failure, not a successful
+// exit).
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "fatal:", err)
@@ -46,7 +47,7 @@ func main() {
 	}
 }
 
-// run собирает зависимости и обслуживает запросы до сигнала остановки.
+// run assembles the dependencies and serves requests until a shutdown signal.
 func run() error {
 	log, err := zap.NewProduction()
 	if err != nil {
@@ -85,8 +86,8 @@ func run() error {
 
 	repo := storage.NewRepository(db)
 
-	// Redis-кэш опционален: без него проверка ключей работает по PostgreSQL
-	// (fail-safe по безопасности, деградация по задержке).
+	// The Redis cache is optional: without it key verification works via
+	// PostgreSQL (fail-safe for security, latency degradation).
 	var cache usecase.KeyCache
 	if addr := os.Getenv("REDIS_ADDR"); addr != "" {
 		redisCache, err := storage.NewRedisCache(addr)
@@ -147,9 +148,10 @@ func run() error {
 		zap.Duration("ttl", idempotencyTTL),
 		zap.Duration("processing_timeout", processingTimeout))
 
-	// Отчетность (11.4): адрес Reporting опционален - без него прокси /v1/reports
-	// отвечает 503, остальной мерчант API работает. Таймаут читается и
-	// валидируется безусловно (границы меньше серверного WriteTimeout).
+	// Reporting (11.4): the Reporting address is optional - without it the
+	// /v1/reports proxy responds 503 while the rest of the merchant API works.
+	// The timeout is read and validated unconditionally (bounds are below the
+	// server WriteTimeout).
 	var reportsClient transport.ReportsClient
 	reportingTimeout, err := durationEnv("REPORTING_TIMEOUT", defaultReportingTimeout)
 	if err != nil {
@@ -187,8 +189,8 @@ func run() error {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
 
-	// Мерчант API /v1: аутентификация ключом и идемпотентность POST; маршруты
-	// домена добавляет 7.4, прокси отчетов - 11.4.
+	// Merchant API /v1: key authentication and POST idempotency; domain routes
+	// are added by 7.4, the reports proxy by 11.4.
 	merchantAPI := router.Group("/v1",
 		httpmw.Require(func(ctx context.Context, token string) (string, error) {
 			result, err := keys.Verify(ctx, token)
@@ -237,7 +239,7 @@ func run() error {
 	return nil
 }
 
-// metricsHandler отдает заглушку метрик до задачи 0.7.
+// metricsHandler serves the metrics stub until task 0.7.
 func metricsHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/metrics", func(w http.ResponseWriter, _ *http.Request) {
@@ -247,7 +249,7 @@ func metricsHandler() http.Handler {
 	return mux
 }
 
-// getenv возвращает переменную окружения или значение по умолчанию.
+// getenv returns the environment variable or the fallback value.
 func getenv(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
@@ -255,8 +257,8 @@ func getenv(key, fallback string) string {
 	return fallback
 }
 
-// durationEnv разбирает duration из окружения; невалидное значение - ошибка
-// (fail-safe против молчаливой опечатки в конфигурации).
+// durationEnv parses a duration from the environment; an invalid value is an
+// error (fail-safe against a silent typo in the configuration).
 func durationEnv(name string, fallback time.Duration) (time.Duration, error) {
 	value := os.Getenv(name)
 	if value == "" {
@@ -269,8 +271,8 @@ func durationEnv(name string, fallback time.Duration) (time.Duration, error) {
 	return parsed, nil
 }
 
-// intEnv разбирает целое из окружения; невалидное значение возвращает
-// значение по умолчанию (пул БД не влияет на безопасность).
+// intEnv parses an integer from the environment; an invalid value returns the
+// fallback (the DB pool does not affect security).
 func intEnv(name string, fallback int) int {
 	value := os.Getenv(name)
 	if value == "" {

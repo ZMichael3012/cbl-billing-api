@@ -17,93 +17,93 @@ import (
 	"github.com/cbl/cbl-billing-api/internal/storage"
 )
 
-// Константы кэша идемпотентности: ключ Redis - контракт CBL-003, раздел 7.
+// Idempotency cache constants: the Redis key is the CBL-003 contract, section 7.
 const (
-	// idempotencyCachePrefix задает префикс ключей кэша ответов.
+	// idempotencyCachePrefix sets the prefix of response cache keys.
 	idempotencyCachePrefix = "idem:v1:"
-	// MaxIdempotencyResponseBytes задает предел тела сохраняемого ответа;
-	// больший ответ не кэшируется (повтор выполнится заново).
+	// MaxIdempotencyResponseBytes sets the saved response body limit; a larger
+	// response is not cached (a retry will be executed again).
 	MaxIdempotencyResponseBytes = 256 * 1024
-	// maxRebeginDepth ограничивает повторные попытки переиспользования записи
-	// при конкурентных гонках (delete+insert) и защищает от циклов.
+	// maxRebeginDepth limits repeated attempts to reuse a record under
+	// concurrent races (delete+insert) and protects against loops.
 	maxRebeginDepth = 2
 )
 
-// Границы конфигурации идемпотентности.
+// Idempotency configuration boundaries.
 const (
-	// minIdempotencyTTL задает минимальное окно хранения.
+	// minIdempotencyTTL sets the minimum retention window.
 	minIdempotencyTTL = time.Hour
-	// maxIdempotencyTTL задает максимальное окно хранения.
+	// maxIdempotencyTTL sets the maximum retention window.
 	maxIdempotencyTTL = 7 * 24 * time.Hour
-	// minProcessingTimeout задает минимальный таймаут брошенной обработки.
+	// minProcessingTimeout sets the minimum abandoned processing timeout.
 	minProcessingTimeout = 30 * time.Second
-	// maxProcessingTimeout задает максимальный таймаут брошенной обработки.
+	// maxProcessingTimeout sets the maximum abandoned processing timeout.
 	maxProcessingTimeout = 15 * time.Minute
 )
 
-// Ошибки конфигурации сервиса идемпотентности.
+// Idempotency service configuration errors.
 var (
-	// ErrIdempotencyStoreRequired сообщает об отсутствии хранилища.
+	// ErrIdempotencyStoreRequired reports a missing storage.
 	ErrIdempotencyStoreRequired = errors.New("usecase: idempotency store is required")
-	// ErrIdempotencyConfig сообщает о недопустимой конфигурации.
+	// ErrIdempotencyConfig reports an invalid configuration.
 	ErrIdempotencyConfig = errors.New("usecase: invalid idempotency config")
 )
 
-// IdempotencyStore описывает хранилище записей идемпотентности; попытки
-// адресуются идентификатором записи (fencing: устаревший Finish не может
-// завершить или удалить строку нового исполнения).
+// IdempotencyStore describes the idempotency record storage; attempts are
+// addressed by record id (fencing: a stale Finish cannot complete or delete the
+// record of a new execution).
 type IdempotencyStore interface {
 	BeginIdempotency(ctx context.Context, record storage.IdempotencyRecord) (storage.IdempotencyRecord, bool, error)
 	CompleteIdempotency(ctx context.Context, recordID string, requestHash []byte, status int, contentType string, body []byte) error
 	DeleteIdempotencyAttempt(ctx context.Context, recordID, expectedState string) error
 }
 
-// Snapshot описывает сохраненный ответ для повтора.
+// Snapshot describes a saved response for a retry.
 type Snapshot struct {
-	// Status задает HTTP-статус исходного ответа.
+	// Status sets the HTTP status of the original response.
 	Status int
-	// ContentType задает Content-Type исходного ответа.
+	// ContentType sets the Content-Type of the original response.
 	ContentType string
-	// Body задает тело исходного ответа.
+	// Body sets the body of the original response.
 	Body []byte
 }
 
-// DecisionKind задает решение по запросу с ключом идемпотентности.
+// DecisionKind sets the decision for a request with an idempotency key.
 type DecisionKind int
 
-// Решения по запросу.
+// Decisions for a request.
 const (
-	// DecisionProceed означает выполнение обработчика.
+	// DecisionProceed means the handler is executed.
 	DecisionProceed DecisionKind = iota
-	// DecisionReplay означает выдачу сохраненного ответа.
+	// DecisionReplay means the saved response is returned.
 	DecisionReplay
-	// DecisionConflict означает отказ (reuse ключа или обработка in progress).
+	// DecisionConflict means rejection (key reuse or processing in progress).
 	DecisionConflict
 )
 
-// Decision описывает результат Begin.
+// Decision describes the result of Begin.
 type Decision struct {
-	// Kind задает вид решения.
+	// Kind sets the decision kind.
 	Kind DecisionKind
-	// AttemptID задает идентификатор записи-попытки при DecisionProceed;
-	// Finish обязан адресовать именно ее.
+	// AttemptID sets the attempt record id under DecisionProceed; Finish is
+	// required to address exactly it.
 	AttemptID string
-	// Replay задает сохраненный ответ при DecisionReplay.
+	// Replay sets the saved response under DecisionReplay.
 	Replay Snapshot
-	// Reason задает причину отказа при DecisionConflict.
+	// Reason sets the rejection reason under DecisionConflict.
 	Reason error
 }
 
-// IdempotencyConfig задает параметры сервиса идемпотентности.
+// IdempotencyConfig sets the idempotency service parameters.
 type IdempotencyConfig struct {
-	// TTL задает окно хранения ответов.
+	// TTL sets the response retention window.
 	TTL time.Duration
-	// ProcessingTimeout задает таймаут брошенной обработки.
+	// ProcessingTimeout sets the abandoned processing timeout.
 	ProcessingTimeout time.Duration
 }
 
-// Idempotency реализует решения идемпотентности мерчант API (7.3):
-// быстрый путь Redis и источник истины PostgreSQL.
+// Idempotency implements merchant API idempotency decisions (7.3): the Redis
+// fast path and the PostgreSQL source of truth.
 type Idempotency struct {
 	store IdempotencyStore
 	cache KeyCache
@@ -112,22 +112,22 @@ type Idempotency struct {
 	now   func() time.Time
 }
 
-// cachedIdempotency описывает значение кэша ответов.
+// cachedIdempotency describes the response cache value.
 type cachedIdempotency struct {
-	// Hash задает hex отпечатка запроса.
+	// Hash sets the hex fingerprint of the request.
 	Hash string `json:"hash"`
-	// Status задает HTTP-статус ответа.
+	// Status sets the HTTP status of the response.
 	Status int `json:"status"`
-	// ContentType задает Content-Type ответа.
+	// ContentType sets the Content-Type of the response.
 	ContentType string `json:"content_type"`
-	// BodyBase64 задает тело ответа в base64.
+	// BodyBase64 sets the response body in base64.
 	BodyBase64 string `json:"body_base64"`
-	// CompletedAt задает время завершения исходного запроса (окно TTL).
+	// CompletedAt sets the completion time of the original request (the TTL window).
 	CompletedAt time.Time `json:"completed_at"`
 }
 
-// NewIdempotency создает сервис идемпотентности; конфигурация валидируется
-// fail-fast, nil-кэш означает работу без Redis.
+// NewIdempotency creates the idempotency service; the configuration is
+// validated fail-fast, a nil cache means operation without Redis.
 func NewIdempotency(store IdempotencyStore, cache KeyCache, log *zap.Logger, cfg IdempotencyConfig) (*Idempotency, error) {
 	if store == nil {
 		return nil, ErrIdempotencyStoreRequired
@@ -145,9 +145,9 @@ func NewIdempotency(store IdempotencyStore, cache KeyCache, log *zap.Logger, cfg
 	return &Idempotency{store: store, cache: cache, log: log, cfg: cfg, now: time.Now}, nil
 }
 
-// Begin принимает решение по запросу: выполнить, повторить ответ или отказать.
-// Значение кэша проверяется на целостность и окно: подмена, порча или
-// истечение дают промах и решение по PostgreSQL (источник истины).
+// Begin makes a decision for a request: proceed, replay the response or reject.
+// The cache value is checked for integrity and window: a substitution,
+// corruption or expiration causes a miss and a PostgreSQL decision (source of truth).
 func (i *Idempotency) Begin(ctx context.Context, merchantID, key string, fingerprint []byte) (Decision, error) {
 	cacheKey := idempotencyCacheKey(merchantID, key)
 	hashHex := fmt.Sprintf("%x", fingerprint)
@@ -160,8 +160,8 @@ func (i *Idempotency) Begin(ctx context.Context, merchantID, key string, fingerp
 		} else if cached.Hash == hashHex {
 			return Decision{Kind: DecisionReplay, Replay: cached.Snapshot()}, nil
 		}
-		// Несовпадающий хэш или испорченное значение решает PostgreSQL:
-		// оракул 409 по кэшу не допускается.
+		// A mismatching hash or a corrupted value is decided by PostgreSQL:
+		// a 409 oracle based on the cache is not allowed.
 	}
 
 	attemptID, err := newIdempotencyID()
@@ -183,13 +183,13 @@ func (i *Idempotency) Begin(ctx context.Context, merchantID, key string, fingerp
 	return i.decideExisting(ctx, cacheKey, record, fingerprint, hashHex, 0)
 }
 
-// decideExisting разбирает уже существующую запись: повтор, переиспользование,
-// конкурентную обработку, истечение окна или брошенную обработку.
+// decideExisting handles an existing record: replay, reuse, concurrent
+// processing, window expiration or abandoned processing.
 func (i *Idempotency) decideExisting(ctx context.Context, cacheKey string, record storage.IdempotencyRecord, fingerprint []byte, hashHex string, depth int) (Decision, error) {
 	if !bytes.Equal(record.RequestHash, fingerprint) {
-		// Отпечаток другого тела: переиспользование ключа. Конфликт живет,
-		// пока строка не удалена очисткой 14.2 (осознанно: контракт не
-		// обещает освобождение ключа после окна).
+		// The fingerprint of a different body: key reuse. The conflict lives
+		// until the record is deleted by cleanup 14.2 (deliberately: the
+		// contract does not promise key release after the window).
 		return Decision{Kind: DecisionConflict, Reason: domain.ErrIdempotencyKeyReuse}, nil
 	}
 	now := i.now().UTC()
@@ -215,8 +215,8 @@ func (i *Idempotency) decideExisting(ctx context.Context, cacheKey string, recor
 	}
 }
 
-// rebegin переиспользует истекшую или брошенную запись: удаляет конкретную
-// попытку (fencing по id и состоянию) и вставляет новую processing.
+// rebegin reuses an expired or abandoned record: it deletes the specific
+// attempt (fencing by id and state) and inserts a new processing one.
 func (i *Idempotency) rebegin(ctx context.Context, cacheKey string, record storage.IdempotencyRecord, expectedState string, fingerprint []byte, hashHex string, depth int) (Decision, error) {
 	if depth >= maxRebeginDepth {
 		return Decision{Kind: DecisionConflict, Reason: domain.ErrIdempotencyInProgress}, nil
@@ -244,25 +244,26 @@ func (i *Idempotency) rebegin(ctx context.Context, cacheKey string, record stora
 	return i.decideExisting(ctx, cacheKey, fresh, fingerprint, hashHex, depth+1)
 }
 
-// Finish фиксирует исход обработчика адресованной попытки: успех сохраняется
-// снимком (PG и Redis), ошибка освобождает ключ; слишком большой ответ
-// (overflow) не кэшируется. Устаревшая попытка не может затронуть строку
-// нового исполнения (fencing по id).
+// Finish commits the handler outcome of the addressed attempt: a success is
+// saved as a snapshot (PG and Redis), an error releases the key; a too large
+// response (overflow) is not cached. A stale attempt cannot affect the record
+// of a new execution (fencing by id).
 func (i *Idempotency) Finish(ctx context.Context, merchantID, key, attemptID string, fingerprint []byte, status int, contentType string, body []byte, overflow bool) error {
 	if overflow || status < 200 || status >= 300 {
 		if overflow {
 			i.log.Warn("idempotency response too large, snapshot skipped", zap.String("merchant_id", merchantID))
 		}
 		if err := i.store.DeleteIdempotencyAttempt(ctx, attemptID, "processing"); err != nil {
-			// Конкурент уже сменил состояние попытки (таймаут): освобождать
-			// нечего, ключ займет новое исполнение.
+			// A concurrent request has already changed the attempt state (timeout):
+			// there is nothing to release, a new execution will take the key.
 			i.log.Warn("idempotency abort skipped", zap.String("merchant_id", merchantID), zap.Error(err))
 		}
 		return nil
 	}
 	if err := i.store.CompleteIdempotency(ctx, attemptID, fingerprint, status, contentType, body); err != nil {
-		// Ответ уже вычислен: фиксируем в Redis best-effort; строка processing
-		// истечет по таймауту, повтор запроса переобработается.
+		// The response is already computed: we save it to Redis best-effort; the
+		// processing record will expire by timeout, the request retry will be
+		// reprocessed.
 		i.log.Warn("idempotency completion failed", zap.String("merchant_id", merchantID), zap.Error(err))
 	}
 	completedAt := i.now().UTC()
@@ -274,8 +275,8 @@ func (i *Idempotency) Finish(ctx context.Context, merchantID, key, attemptID str
 	return nil
 }
 
-// cacheGet читает кэш и валидирует значение: порча, недопустимый статус или
-// хэш дают промах (решение принимает PostgreSQL).
+// cacheGet reads the cache and validates the value: corruption, an invalid
+// status or hash cause a miss (PostgreSQL makes the decision).
 func (i *Idempotency) cacheGet(ctx context.Context, cacheKey string) (cachedIdempotency, bool, error) {
 	if i.cache == nil {
 		return cachedIdempotency{}, false, nil
@@ -296,8 +297,8 @@ func (i *Idempotency) cacheGet(ctx context.Context, cacheKey string) (cachedIdem
 	return cached, true, nil
 }
 
-// cacheSet пишет снимок в кэш с остатком окна TTL от completedAt
-// (best-effort); истекшее окно в кэш не пишется.
+// cacheSet writes a snapshot to the cache with the remaining TTL window from
+// completedAt (best-effort); an expired window is not written to the cache.
 func (i *Idempotency) cacheSet(ctx context.Context, cacheKey string, snapshot Snapshot, hashHex string, completedAt time.Time) {
 	if i.cache == nil {
 		return
@@ -322,7 +323,7 @@ func (i *Idempotency) cacheSet(ctx context.Context, cacheKey string, snapshot Sn
 	}
 }
 
-// cacheDelete удаляет значение кэша best-effort.
+// cacheDelete deletes the cache value best-effort.
 func (i *Idempotency) cacheDelete(ctx context.Context, cacheKey string) {
 	if i.cache == nil {
 		return
@@ -332,8 +333,8 @@ func (i *Idempotency) cacheDelete(ctx context.Context, cacheKey string) {
 	}
 }
 
-// valid проверяет целостность значения кэша: хэш-форма, статус 2xx и
-// декодируемое тело.
+// valid checks the integrity of the cache value: hash shape, 2xx status and a
+// decodable body.
 func (c cachedIdempotency) valid() bool {
 	if len(c.Hash) != 64 {
 		return false
@@ -351,18 +352,18 @@ func (c cachedIdempotency) valid() bool {
 	return err == nil
 }
 
-// expired сообщает, что окно хранения значения кэша истекло.
+// expired reports that the cache value retention window has expired.
 func (c cachedIdempotency) expired(now time.Time, ttl time.Duration) bool {
 	return now.Sub(c.CompletedAt) >= ttl
 }
 
-// Snapshot восстанавливает снимок ответа из значения кэша.
+// Snapshot restores the response snapshot from the cache value.
 func (c cachedIdempotency) Snapshot() Snapshot {
 	body, _ := base64.StdEncoding.DecodeString(c.BodyBase64)
 	return Snapshot{Status: c.Status, ContentType: c.ContentType, Body: body}
 }
 
-// newIdempotencyID генерирует идентификатор попытки.
+// newIdempotencyID generates an attempt id.
 func newIdempotencyID() (string, error) {
 	id, err := uuid.NewV7()
 	if err != nil {
@@ -371,12 +372,12 @@ func newIdempotencyID() (string, error) {
 	return id.String(), nil
 }
 
-// idempotencyCacheKey собирает ключ кэша ответов.
+// idempotencyCacheKey assembles a response cache key.
 func idempotencyCacheKey(merchantID, key string) string {
 	return idempotencyCachePrefix + merchantID + ":" + key
 }
 
-// derefInt разыменовывает необязательное целое.
+// derefInt dereferences an optional integer.
 func derefInt(value *int) int {
 	if value == nil {
 		return 0
@@ -384,7 +385,7 @@ func derefInt(value *int) int {
 	return *value
 }
 
-// derefString разыменовывает необязательную строку.
+// derefString dereferences an optional string.
 func derefString(value *string) string {
 	if value == nil {
 		return ""

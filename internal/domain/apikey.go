@@ -11,90 +11,91 @@ import (
 	"time"
 )
 
-// Параметры формата ключа: cbl_v1_<prefix>_<secret>.
+// Parameters of the key format: cbl_v1_<prefix>_<secret>.
 const (
-	// tokenScheme задает версионированный префикс ключа: смена схемы
-	// выпускается новой версией.
+	// tokenScheme defines the versioned key prefix: a scheme change is
+	// released as a new version.
 	tokenScheme = "cbl_v1_"
-	// PrefixBytes задает длину случайной части prefix в байтах.
+	// PrefixBytes defines the length of the random prefix part in bytes.
 	PrefixBytes = 5
-	// SecretBytes задает длину секрета ключа в байтах (CSPRNG).
+	// SecretBytes defines the length of the key secret in bytes (CSPRNG).
 	SecretBytes = 32
 )
 
-// tokenPattern задает строгий формат ключа: prefix - 10 hex-символов,
-// secret - 43 символа base64url без паддинга.
+// tokenPattern defines the strict key format: the prefix is 10 hex characters,
+// the secret is 43 base64url characters without padding.
 var tokenPattern = regexp.MustCompile(`^cbl_v1_([0-9a-f]{10})_([A-Za-z0-9_-]{43})$`)
 
-// merchantIDPattern задает форму идентификатора мерчанта: как бизнес-ключ
-// плана счетов леджера (CBL-003, раздел 9).
+// merchantIDPattern defines the merchant identifier shape: like the ledger
+// account plan business key (CBL-003, section 9).
 var merchantIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 
-// Ошибки домена ключей; транспорт и usecase маппят их в коды ответов.
+// Key domain errors; transport and usecase map them to response codes.
 var (
-	// ErrUnauthorized сообщает о неизвестном, отозванном или истекшем ключе.
+	// ErrUnauthorized reports an unknown, revoked or expired key.
 	ErrUnauthorized = errors.New("apikeys: unauthorized")
-	// ErrKeyNotFound сообщает об отсутствии ключа по идентификатору или prefix.
+	// ErrKeyNotFound reports a missing key by identifier or prefix.
 	ErrKeyNotFound = errors.New("apikeys: key not found")
-	// ErrKeyAlreadyActive сообщает о существующем активном ключе мерчанта.
+	// ErrKeyAlreadyActive reports an existing active key of the merchant.
 	ErrKeyAlreadyActive = errors.New("apikeys: active key already exists")
-	// ErrStatusConflict сообщает о конкурентной смене состояния ключа.
+	// ErrStatusConflict reports a concurrent key status change.
 	ErrStatusConflict = errors.New("apikeys: key status conflict")
-	// ErrInvalidMerchantID сообщает о недопустимом идентификаторе мерчанта.
+	// ErrInvalidMerchantID reports an invalid merchant identifier.
 	ErrInvalidMerchantID = errors.New("apikeys: invalid merchant id")
 )
 
-// Status описывает состояние жизненного цикла ключа.
+// Status describes the key lifecycle state.
 type Status string
 
-// Состояния ключа.
+// Key states.
 const (
-	// StatusActive задает действующий ключ (единственный на мерчанта).
+	// StatusActive defines the valid key (a single one per merchant).
 	StatusActive Status = "active"
-	// StatusRetiring задает замененный ключ в окне перекрытия ротации.
+	// StatusRetiring defines a replaced key within the rotation overlap window.
 	StatusRetiring Status = "retiring"
-	// StatusRevoked задает отозванный ключ (терминальное состояние).
+	// StatusRevoked defines a revoked key (terminal state).
 	StatusRevoked Status = "revoked"
 )
 
-// Valid сообщает, что состояние входит в жизненный цикл.
+// Valid reports that the state belongs to the lifecycle.
 func (s Status) Valid() bool {
 	return s == StatusActive || s == StatusRetiring || s == StatusRevoked
 }
 
-// APIKey описывает запись ключа; сырой секрет в записи не хранится - только
-// TokenHash (sha256 полного ключа).
+// APIKey describes a key record; the raw secret is not stored in the record -
+// only TokenHash (sha256 of the full key).
 type APIKey struct {
-	// ID задает UUIDv7 записи.
+	// ID defines the record UUIDv7.
 	ID string
-	// MerchantID задает владельца ключа.
+	// MerchantID defines the key owner.
 	MerchantID string
-	// Prefix задает публичный префикс ключа для аудита и поиска.
+	// Prefix defines the public key prefix for audit and lookup.
 	Prefix string
-	// TokenHash задает sha256 полного ключа.
+	// TokenHash defines the sha256 of the full key.
 	TokenHash []byte
-	// Status задает состояние жизненного цикла.
+	// Status defines the lifecycle state.
 	Status Status
-	// CreatedAt задает время выпуска.
+	// CreatedAt defines the issue time.
 	CreatedAt time.Time
-	// ExpiresAt задает конец окна перекрытия для retiring-ключа (7.2).
+	// ExpiresAt defines the overlap window end for a retiring key (7.2).
 	ExpiresAt *time.Time
-	// RevokedAt задает время отзыва.
+	// RevokedAt defines the revocation time.
 	RevokedAt *time.Time
-	// LastUsedAt задает последнее успешное использование (best-effort).
+	// LastUsedAt defines the last successful use (best-effort).
 	LastUsedAt *time.Time
-	// ExpiresValid сообщает, что срок retiring-ключа не истек на момент чтения
-	// (вычисляется БД по now() сервера, не часами приложения).
+	// ExpiresValid reports that the retiring key has not expired at read time
+	// (computed by the DB from the server now(), not by application clocks).
 	ExpiresValid bool
 }
 
-// ValidMerchantID сообщает, что идентификатор мерчанта допустим.
+// ValidMerchantID reports that the merchant identifier is valid.
 func ValidMerchantID(merchantID string) bool {
 	return merchantIDPattern.MatchString(merchantID)
 }
 
-// GenerateToken генерирует новый ключ: возвращает полный токен (показывается
-// единственный раз), prefix для записи и sha256-хэш токена для хранения.
+// GenerateToken generates a new key: it returns the full token (shown only
+// once), the prefix for the record and the sha256 hash of the token for
+// storage.
 func GenerateToken() (token, prefix string, hash []byte, err error) {
 	prefixBytes := make([]byte, PrefixBytes)
 	if _, err := rand.Read(prefixBytes); err != nil {
@@ -109,14 +110,14 @@ func GenerateToken() (token, prefix string, hash []byte, err error) {
 	return token, prefix, HashToken(token), nil
 }
 
-// HashToken возвращает sha256 полного токена: единый ключ поиска в БД и в
-// Redis-кэше проверки (контракт с периметром, 7.5).
+// HashToken returns the sha256 of the full token: the single lookup key in the
+// DB and in the Redis verification cache (contract with the perimeter, 7.5).
 func HashToken(token string) []byte {
 	sum := sha256.Sum256([]byte(token))
 	return sum[:]
 }
 
-// ParseToken проверяет формат токена и возвращает его prefix.
+// ParseToken validates the token format and returns its prefix.
 func ParseToken(token string) (string, error) {
 	matches := tokenPattern.FindStringSubmatch(token)
 	if matches == nil {

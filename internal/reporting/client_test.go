@@ -11,7 +11,7 @@ import (
 	"github.com/cbl/cbl-billing-api/test/reportingstub"
 )
 
-// startStub поднимает тестовый ReportingService и клиент к нему.
+// startStub starts a test ReportingService and a client for it.
 func startStub(t *testing.T) (*reportingstub.Server, *Client) {
 	t.Helper()
 	stub := reportingstub.New()
@@ -24,7 +24,7 @@ func startStub(t *testing.T) (*reportingstub.Server, *Client) {
 	return stub, client
 }
 
-// TestQueryPage проверяет успешную страницу и передачу параметров.
+// TestQueryPage verifies a successful page and parameter passing.
 func TestQueryPage(t *testing.T) {
 	stub, client := startStub(t)
 	page, err := client.Query(t.Context(), Query{
@@ -43,7 +43,7 @@ func TestQueryPage(t *testing.T) {
 	assert.Equal(t, uint32(5), requests[0].GetLimit())
 }
 
-// TestQueryPeriods проверяет передачу границ периода.
+// TestQueryPeriods verifies period bound passing.
 func TestQueryPeriods(t *testing.T) {
 	stub, client := startStub(t)
 	from := time.Date(2026, 10, 15, 10, 0, 0, 0, time.UTC)
@@ -59,7 +59,7 @@ func TestQueryPeriods(t *testing.T) {
 	assert.Equal(t, to.UnixMilli(), requests[0].GetPeriodTo().AsTime().UnixMilli())
 }
 
-// TestQueryErrorClassification проверяет классификацию статусов gRPC.
+// TestQueryErrorClassification verifies gRPC status classification.
 func TestQueryErrorClassification(t *testing.T) {
 	_, client := startStub(t)
 
@@ -73,7 +73,7 @@ func TestQueryErrorClassification(t *testing.T) {
 	require.ErrorIs(t, err, ErrUnavailable)
 }
 
-// TestQueryUnavailable проверяет классификацию обрыва соединения.
+// TestQueryUnavailable verifies connection loss classification.
 func TestQueryUnavailable(t *testing.T) {
 	stub, client := startStub(t)
 	stub.Stop()
@@ -81,7 +81,7 @@ func TestQueryUnavailable(t *testing.T) {
 	require.ErrorIs(t, err, ErrUnavailable)
 }
 
-// TestNewClientValidation проверяет валидацию адреса и таймаута.
+// TestNewClientValidation verifies address and timeout validation.
 func TestNewClientValidation(t *testing.T) {
 	_, err := NewClient("no-port", time.Second)
 	require.Error(t, err)
@@ -89,7 +89,7 @@ func TestNewClientValidation(t *testing.T) {
 	require.Error(t, err)
 }
 
-// TestClassifyNonStatus проверяет отнесение нестатусных ошибок к недоступности.
+// TestClassifyNonStatus verifies that non-status errors are classified as unavailable.
 func TestClassifyNonStatus(t *testing.T) {
 	require.ErrorIs(t, classify(errors.New("transport closed")), ErrUnavailable)
 }

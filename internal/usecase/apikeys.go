@@ -13,30 +13,30 @@ import (
 	"github.com/cbl/cbl-billing-api/internal/storage"
 )
 
-// Константы кэша проверки: префикс ключа Redis - контракт с периметром (7.5).
+// Verification cache constants: the Redis key prefix is the contract with the perimeter (7.5).
 const (
-	// cacheKeyPrefix задает префикс ключей кэша проверки.
+	// cacheKeyPrefix sets the prefix of verification cache keys.
 	cacheKeyPrefix = "apikey:v1:"
-	// cacheValueDeny задает значение негативного кэша.
+	// cacheValueDeny sets the negative cache value.
 	cacheValueDeny = "deny"
-	// cacheValueOKPrefix задает префикс позитивного значения с мерчантом.
+	// cacheValueOKPrefix sets the prefix of the positive value with the merchant.
 	cacheValueOKPrefix = "ok:"
 )
 
-// Границы конфигурации кэша и ротации.
+// Cache and rotation configuration boundaries.
 const (
-	// minGrace задает минимальное окно перекрытия ротации.
+	// minGrace sets the minimum rotation overlap window.
 	minGrace = time.Hour
-	// minCacheTTL задает минимальный TTL позитивного кэша.
+	// minCacheTTL sets the minimum TTL of the positive cache.
 	minCacheTTL = time.Second
-	// maxCacheTTL задает максимальный TTL позитивного кэша (меньше minGrace,
-	// чтобы отозванные ключи не жили в кэше дольше гарантий).
+	// maxCacheTTL sets the maximum TTL of the positive cache (less than
+	// minGrace so that revoked keys do not outlive the guarantees in the cache).
 	maxCacheTTL = time.Hour
-	// maxDenyTTL задает максимальный TTL негативного кэша (анти-перебор).
+	// maxDenyTTL sets the maximum TTL of the negative cache (anti brute force).
 	maxDenyTTL = time.Minute
 )
 
-// KeyStore описывает хранилище ключей, нужное сервису.
+// KeyStore describes the key storage needed by the service.
 type KeyStore interface {
 	CreateAPIKey(ctx context.Context, key domain.APIKey) error
 	FindAPIKeyByHash(ctx context.Context, tokenHash []byte) (domain.APIKey, error)
@@ -47,9 +47,9 @@ type KeyStore interface {
 	TouchAPIKeyLastUsed(ctx context.Context, id string) error
 }
 
-// KeyCache описывает кэш проверки; nil-кэш означает работу без Redis.
-// SetNX используется для позитивных значений: tombstone отзыва (Set)
-// не должен перезаписываться поздней записью успешной проверки.
+// KeyCache describes the verification cache; a nil cache means operation
+// without Redis. SetNX is used for positive values: a revocation tombstone
+// (Set) must not be overwritten by a later successful verification record.
 type KeyCache interface {
 	Get(ctx context.Context, key string) (string, bool, error)
 	Set(ctx context.Context, key, value string, ttl time.Duration) error
@@ -57,25 +57,25 @@ type KeyCache interface {
 	Del(ctx context.Context, keys ...string) error
 }
 
-// KeysConfig задает параметры сервиса ключей.
+// KeysConfig sets the key service parameters.
 type KeysConfig struct {
-	// CacheTTL задает TTL позитивного кэша проверки.
+	// CacheTTL sets the TTL of the positive verification cache.
 	CacheTTL time.Duration
-	// DenyTTL задает TTL негативного кэша (0 - выключен).
+	// DenyTTL sets the TTL of the negative cache (0 disables it).
 	DenyTTL time.Duration
-	// RotationGrace задает окно перекрытия ротации.
+	// RotationGrace sets the rotation overlap window.
 	RotationGrace time.Duration
 }
 
-// VerifyResult описывает результат проверки ключа.
+// VerifyResult describes the key verification result.
 type VerifyResult struct {
-	// MerchantID задает владельца ключа.
+	// MerchantID sets the key owner.
 	MerchantID string
-	// CacheHit сообщает, что результат получен из кэша без обращения к БД.
+	// CacheHit reports that the result came from the cache without a database call.
 	CacheHit bool
 }
 
-// APIKeys реализует жизненный цикл и проверку API-ключей мерчантов (7.2).
+// APIKeys implements the lifecycle and verification of merchant API keys (7.2).
 type APIKeys struct {
 	store KeyStore
 	cache KeyCache
@@ -84,7 +84,7 @@ type APIKeys struct {
 	now   func() time.Time
 }
 
-// NewAPIKeys создает сервис ключей; конфигурация валидируется fail-fast.
+// NewAPIKeys creates the key service; the configuration is validated fail-fast.
 func NewAPIKeys(store KeyStore, cache KeyCache, log *zap.Logger, cfg KeysConfig) (*APIKeys, error) {
 	if store == nil {
 		return nil, errors.New("usecase: key store is required")
@@ -104,8 +104,8 @@ func NewAPIKeys(store KeyStore, cache KeyCache, log *zap.Logger, cfg KeysConfig)
 	return &APIKeys{store: store, cache: cache, log: log, cfg: cfg, now: time.Now}, nil
 }
 
-// Issue выпускает новый активный ключ и возвращает его полное значение
-// единственный раз; при существующем активном ключе - ErrKeyAlreadyActive.
+// Issue issues a new active key and returns its full value exactly once;
+// with an existing active key it returns ErrKeyAlreadyActive.
 func (a *APIKeys) Issue(ctx context.Context, merchantID string) (domain.APIKey, string, error) {
 	key, token, err := a.newKey(merchantID)
 	if err != nil {
@@ -121,11 +121,12 @@ func (a *APIKeys) Issue(ctx context.Context, merchantID string) (domain.APIKey, 
 	return key, token, nil
 }
 
-// Rotate выпускает новый активный ключ, переводит прежний активный в retiring
-// с окном RotationGrace и отзывает прежний retiring (единственный на мерчанта).
-// Кэш проверки приводится в согласованное состояние: отозванному ключу ставится
-// tombstone deny (перекрывает позднюю запись успешной проверки), retiring-ключ
-// удаляется из кэша и будет перечитан с ограниченным TTL.
+// Rotate issues a new active key, moves the previous active key to retiring
+// with the RotationGrace window and revokes the previous retiring key (the only
+// one per merchant). The verification cache is brought to a consistent state:
+// the revoked key gets a deny tombstone (it overrides a later successful
+// verification record), the retiring key is removed from the cache and will be
+// re-read with a limited TTL.
 func (a *APIKeys) Rotate(ctx context.Context, merchantID string) (domain.APIKey, string, error) {
 	key, token, err := a.newKey(merchantID)
 	if err != nil {
@@ -151,7 +152,7 @@ func (a *APIKeys) Rotate(ctx context.Context, merchantID string) (domain.APIKey,
 	return key, token, nil
 }
 
-// Revoke отзывает ключ по id или prefix; повторный отзыв идемпотентен.
+// Revoke revokes a key by id or prefix; a repeated revocation is idempotent.
 func (a *APIKeys) Revoke(ctx context.Context, ref string) (domain.APIKey, error) {
 	key, err := a.store.RevokeAPIKey(ctx, ref)
 	if err != nil {
@@ -167,13 +168,13 @@ func (a *APIKeys) Revoke(ctx context.Context, ref string) (domain.APIKey, error)
 	return key, nil
 }
 
-// List возвращает ключи мерчанта для оператора.
+// List returns the merchant keys for the operator.
 func (a *APIKeys) List(ctx context.Context, merchantID string) ([]domain.APIKey, error) {
 	return a.store.ListAPIKeysByMerchant(ctx, merchantID)
 }
 
-// Verify проверяет ключ: Redis-кэш (быстрый путь), затем PostgreSQL (источник
-// истины). Ошибка кэша не ослабляет проверку - решает БД (fail-safe).
+// Verify checks a key: Redis cache (fast path), then PostgreSQL (source of
+// truth). A cache error does not weaken verification: the database decides (fail-safe).
 func (a *APIKeys) Verify(ctx context.Context, token string) (VerifyResult, error) {
 	if _, err := domain.ParseToken(token); err != nil {
 		return VerifyResult{}, err
@@ -205,8 +206,8 @@ func (a *APIKeys) Verify(ctx context.Context, token string) (VerifyResult, error
 		a.cacheSet(ctx, cacheKey, cacheValueDeny, a.cfg.DenyTTL)
 		return VerifyResult{}, err
 	}
-	// TTL позитивного кэша ограничен остатком окна retiring-ключа: истекший
-	// ключ не должен приниматься из кэша после expires_at.
+	// The TTL of the positive cache is limited by the remaining window of the
+	// retiring key: an expired key must not be accepted from the cache after expires_at.
 	ttl := a.cfg.CacheTTL
 	if key.Status == domain.StatusRetiring && key.ExpiresAt != nil {
 		if remaining := key.ExpiresAt.Sub(a.now().UTC()); remaining < ttl {
@@ -215,13 +216,13 @@ func (a *APIKeys) Verify(ctx context.Context, token string) (VerifyResult, error
 	}
 	a.cacheSetNX(ctx, cacheKey, cacheValueOKPrefix+key.MerchantID, ttl)
 	if err := a.store.TouchAPIKeyLastUsed(ctx, key.ID); err != nil {
-		// Время последнего использования - диагностика, не безопасность.
+		// The last used time is diagnostics, not security.
 		a.log.Warn("api key last used not updated", zap.String("prefix", key.Prefix), zap.Error(err))
 	}
 	return VerifyResult{MerchantID: key.MerchantID}, nil
 }
 
-// newKey собирает новую запись ключа со случайным токеном.
+// newKey assembles a new key record with a random token.
 func (a *APIKeys) newKey(merchantID string) (domain.APIKey, string, error) {
 	if !domain.ValidMerchantID(merchantID) {
 		return domain.APIKey{}, "", fmt.Errorf("%w: %q", domain.ErrInvalidMerchantID, merchantID)
@@ -245,8 +246,9 @@ func (a *APIKeys) newKey(merchantID string) (domain.APIKey, string, error) {
 	return key, token, nil
 }
 
-// authorize проверяет состояние ключа на момент обращения: срок retiring
-// вычислен БД (ExpiresValid, now() сервера), revoked и истекший - отказ.
+// authorize checks the key state at the time of the request: the retiring
+// deadline is computed by the database (ExpiresValid, server now()), revoked
+// and expired keys are rejected.
 func (a *APIKeys) authorize(key domain.APIKey) error {
 	switch key.Status {
 	case domain.StatusActive:
@@ -261,9 +263,9 @@ func (a *APIKeys) authorize(key domain.APIKey) error {
 	}
 }
 
-// invalidate приводит кэш проверки в согласованное состояние: запись удаляется,
-// а для отозванного ключа ставится tombstone deny на время позитивного TTL -
-// поздняя запись успешной проверки (SetNX) его не перезапишет.
+// invalidate brings the verification cache to a consistent state: the record
+// is deleted, and for a revoked key a deny tombstone is set for the positive
+// TTL duration; a later successful verification record (SetNX) will not overwrite it.
 func (a *APIKeys) invalidate(ctx context.Context, key domain.APIKey, revoked bool) {
 	if a.cache == nil {
 		return
@@ -280,7 +282,7 @@ func (a *APIKeys) invalidate(ctx context.Context, key domain.APIKey, revoked boo
 	}
 }
 
-// cacheGet читает кэш; nil-кэш всегда дает промах.
+// cacheGet reads the cache; a nil cache always misses.
 func (a *APIKeys) cacheGet(ctx context.Context, key string) (string, bool, error) {
 	if a.cache == nil {
 		return "", false, nil
@@ -288,7 +290,7 @@ func (a *APIKeys) cacheGet(ctx context.Context, key string) (string, bool, error
 	return a.cache.Get(ctx, key)
 }
 
-// cacheSet пишет кэш best-effort; нулевой TTL выключает запись.
+// cacheSet writes the cache best-effort; a zero TTL disables writing.
 func (a *APIKeys) cacheSet(ctx context.Context, key, value string, ttl time.Duration) {
 	if a.cache == nil || ttl <= 0 {
 		return
@@ -298,7 +300,7 @@ func (a *APIKeys) cacheSet(ctx context.Context, key, value string, ttl time.Dura
 	}
 }
 
-// cacheSetNX пишет позитивное значение, не перезаписывая tombstone отзыва.
+// cacheSetNX writes a positive value without overwriting a revocation tombstone.
 func (a *APIKeys) cacheSetNX(ctx context.Context, key, value string, ttl time.Duration) {
 	if a.cache == nil || ttl <= 0 {
 		return
@@ -308,7 +310,7 @@ func (a *APIKeys) cacheSetNX(ctx context.Context, key, value string, ttl time.Du
 	}
 }
 
-// trimCacheOK выделяет мерчанта из позитивного значения кэша.
+// trimCacheOK extracts the merchant from a positive cache value.
 func trimCacheOK(value string) (string, bool) {
 	if len(value) <= len(cacheValueOKPrefix) || value[:len(cacheValueOKPrefix)] != cacheValueOKPrefix {
 		return "", false

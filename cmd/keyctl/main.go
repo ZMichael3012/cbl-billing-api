@@ -1,6 +1,6 @@
-// Команда keyctl - операторский CLI управления API-ключами мерчантов (7.2)
-// до появления админ-интерфейса 12.x: выдача, ротация, отзыв, список и
-// диагностическая проверка ключа.
+// main implements the keyctl operator CLI for managing merchant API keys (7.2)
+// until the 12.x admin interface appears: issue, rotate, revoke, list and
+// diagnostic key verification.
 package main
 
 import (
@@ -20,7 +20,7 @@ import (
 	"github.com/cbl/cbl-billing-api/internal/usecase"
 )
 
-// Конфигурация по умолчанию; совпадает с сервисом.
+// Default configuration; matches the service.
 const (
 	defaultCacheTTL = 5 * time.Minute
 	defaultDenyTTL  = time.Minute
@@ -38,7 +38,7 @@ func main() {
 	}
 }
 
-// run выполняет подкоманду.
+// run executes the subcommand.
 func run(command string, args []string) error {
 	fs := flag.NewFlagSet(command, flag.ExitOnError)
 	merchant := fs.String("merchant", "", "идентификатор мерчанта (issue, rotate, list)")
@@ -72,8 +72,8 @@ func run(command string, args []string) error {
 		cache = redisCache
 	}
 
-	// Невалидный API_KEY_ROTATION_GRACE останавливает команду: окно, выставленное
-	// в БД, должно совпадать с ожиданиями сервиса (fail-safe).
+	// An invalid API_KEY_ROTATION_GRACE stops the command: the window written
+	// to the DB must match the service expectations (fail-safe).
 	grace, err := envDuration("API_KEY_ROTATION_GRACE", defaultGrace)
 	if err != nil {
 		return err
@@ -154,12 +154,12 @@ func run(command string, args []string) error {
 	}
 }
 
-// printKey печатает запись ключа без секрета.
+// printKey prints the key record without the secret.
 func printKey(id, prefix, merchantID, status string) {
 	fmt.Printf("id=%s prefix=%s merchant_id=%s status=%s\n", id, prefix, merchantID, status)
 }
 
-// envOr возвращает переменную окружения или значение по умолчанию.
+// envOr returns the environment variable or the fallback value.
 func envOr(name, fallback string) string {
 	if value := os.Getenv(name); value != "" {
 		return value
@@ -167,8 +167,8 @@ func envOr(name, fallback string) string {
 	return fallback
 }
 
-// envDuration разбирает duration из окружения; невалидное значение -
-// ошибка команды (fail-safe против опечатки, как в сервисе).
+// envDuration parses a duration from the environment; an invalid value is a
+// command error (fail-safe against a typo, like in the service).
 func envDuration(name string, fallback time.Duration) (time.Duration, error) {
 	value := os.Getenv(name)
 	if value == "" {
@@ -181,8 +181,8 @@ func envDuration(name string, fallback time.Duration) (time.Duration, error) {
 	return parsed, nil
 }
 
-// logger собирает логгер CLI: аудит действий с ключами (prefix, мерчант, без
-// токенов) идет в stderr с уровня info.
+// logger assembles the CLI logger: the audit of key actions (prefix, merchant,
+// no tokens) goes to stderr at the info level.
 func logger() *zap.Logger {
 	log, err := zap.NewDevelopment()
 	if err != nil {
@@ -191,7 +191,7 @@ func logger() *zap.Logger {
 	return log
 }
 
-// usage печатает справку.
+// usage prints the help.
 func usage() {
 	fmt.Fprintln(os.Stderr, `keyctl - управление API-ключами мерчантов (7.2)
 

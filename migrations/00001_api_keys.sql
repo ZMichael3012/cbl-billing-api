@@ -1,8 +1,8 @@
 -- +goose Up
--- API-ключи мерчантов (7.2): хранится только sha256 полного ключа; prefix
--- служит аудиту и поиску оператором. Частичные уникальные индексы делают
--- структурно невозможными более одного active и более одного retiring ключа
--- на мерчанта (второй барьер к логике Rotate).
+-- Merchant API keys (7.2): only the sha256 of the full key is stored; the prefix
+-- serves auditing and operator search. Partial unique indexes make more than one
+-- active and more than one retiring key per merchant structurally impossible
+-- (a second barrier to the Rotate logic).
 CREATE TABLE api_keys (
     id           uuid        PRIMARY KEY,
     merchant_id  text        NOT NULL CHECK (merchant_id ~ '^[A-Za-z0-9_-]{1,128}$'),
@@ -13,9 +13,9 @@ CREATE TABLE api_keys (
     expires_at   timestamptz,
     revoked_at   timestamptz,
     last_used_at timestamptz,
-    -- Retiring обязан иметь срок окончания окна; revoked обязан иметь время
-    -- отзыва; обратные импликации не требуются: revoked сохраняет исторический
-    -- expires_at для аудита.
+    -- A retiring key must have an expiry; a revoked key must have a revocation
+    -- time; the reverse implications are not required: revoked keeps the
+    -- historical expires_at for auditing.
     CHECK (status <> 'retiring' OR expires_at IS NOT NULL),
     CHECK (status <> 'revoked' OR revoked_at IS NOT NULL)
 );
@@ -35,8 +35,8 @@ BEGIN
         OR NEW.created_at IS DISTINCT FROM OLD.created_at THEN
         RAISE EXCEPTION 'api_keys: immutable fields cannot change';
     END IF;
-    -- Отозванный ключ неизменяем: повторный отзыв идемпотентен в сервисе,
-    -- а не строкой БД.
+    -- A revoked key is immutable: a repeated revoke is idempotent in the
+    -- service, not at the database row level.
     IF OLD.status = 'revoked' THEN
         RAISE EXCEPTION 'api_keys: revoked key is immutable';
     END IF;
@@ -45,7 +45,7 @@ BEGIN
             RAISE EXCEPTION 'api_keys: transition % -> % is forbidden', OLD.status, NEW.status;
         END IF;
     ELSE
-        -- Без смены статуса разрешено только обновление last_used_at.
+        -- Without a status change only last_used_at may be updated.
         IF NEW.expires_at IS DISTINCT FROM OLD.expires_at
             OR NEW.revoked_at IS DISTINCT FROM OLD.revoked_at THEN
             RAISE EXCEPTION 'api_keys: lifecycle fields require status change';
@@ -60,8 +60,9 @@ CREATE TRIGGER api_keys_guard_trigger
     BEFORE UPDATE ON api_keys
     FOR EACH ROW EXECUTE FUNCTION api_keys_guard();
 
--- Запрет удаления и очистки: строка revoked-ключа - след отзыва, его нельзя
--- потерять (аудит операций - 12.1; journal отсутствует осознанно).
+-- Deletion and truncation are forbidden: a revoked key row is the trace of the
+-- revocation and must not be lost (operation audit - 12.1; a journal table is
+-- intentionally absent).
 -- +goose StatementBegin
 CREATE FUNCTION api_keys_no_delete() RETURNS trigger AS $$
 BEGIN

@@ -1,4 +1,4 @@
-.PHONY: build test test-integration e2e vet lint fmt up down
+.PHONY: build test test-integration vet lint fmt up down
 
 build:
 	go build ./...
@@ -6,15 +6,13 @@ build:
 test:
 	go test ./...
 
-# test-integration гоняет integration-тесты (testcontainers: PostgreSQL, Redis).
+# test-integration runs integration tests (testcontainers: PostgreSQL, Redis).
 test-integration:
 	go test -tags integration -count=1 ./internal/...
 
-# e2e поднимает compose-стенд: жизненный цикл API-ключей (7.2), старт
-# сервиса с миграциями (7.3) и прокси отчетов /v1/reports (11.4).
-e2e:
-	powershell -NoProfile -File test/e2e/api_keys.ps1
-	powershell -NoProfile -File test/e2e/reports.ps1
+# E2E: a run is performed by an agent following the test/e2e/E2E.md instruction
+# (platform-independent; artifacts go to test/e2e/.runs/<UTC mark>/); there are
+# no PowerShell run scripts.
 
 vet:
 	go vet ./...

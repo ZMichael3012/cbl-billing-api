@@ -9,36 +9,36 @@ import (
 	"gorm.io/gorm"
 )
 
-// IdempotencyRecord описывает строку таблицы idempotency_keys.
+// IdempotencyRecord describes an idempotency_keys table row.
 type IdempotencyRecord struct {
-	// ID задает UUIDv7 записи.
+	// ID defines the record UUIDv7.
 	ID string `gorm:"column:id;type:uuid;primaryKey"`
-	// MerchantID задает владельца ключа.
+	// MerchantID defines the key owner.
 	MerchantID string `gorm:"column:merchant_id"`
-	// Key задает ключ идемпотентности запроса.
+	// Key defines the request idempotency key.
 	Key string `gorm:"column:key"`
-	// RequestHash задает sha256 отпечатка запроса.
+	// RequestHash defines the sha256 of the request fingerprint.
 	RequestHash []byte `gorm:"column:request_hash"`
-	// State задает состояние: processing или completed.
+	// State defines the state: processing or completed.
 	State string `gorm:"column:state"`
-	// ResponseStatus задает статус сохраненного ответа (только completed).
+	// ResponseStatus defines the saved response status (completed only).
 	ResponseStatus *int `gorm:"column:response_status"`
-	// ResponseContentType задает Content-Type сохраненного ответа.
+	// ResponseContentType defines the saved response Content-Type.
 	ResponseContentType *string `gorm:"column:response_content_type"`
-	// ResponseBody задает тело сохраненного ответа (до предела middleware).
+	// ResponseBody defines the saved response body (up to the middleware limit).
 	ResponseBody []byte `gorm:"column:response_body"`
-	// CreatedAt задает время вставки записи.
+	// CreatedAt defines the record insertion time.
 	CreatedAt time.Time `gorm:"column:created_at"`
-	// CompletedAt задает время успешного завершения.
+	// CompletedAt defines the successful completion time.
 	CompletedAt *time.Time `gorm:"column:completed_at"`
 }
 
-// TableName задает имя таблицы идемпотентности.
+// TableName defines the idempotency table name.
 func (IdempotencyRecord) TableName() string { return "idempotency_keys" }
 
-// BeginIdempotency вставляет запись processing; занятый ключ возвращает
-// существующую запись (created=false) вместо ошибки - вызывающий решает,
-// повтор это, переиспользование или конкурентная обработка.
+// BeginIdempotency inserts a processing record; a taken key returns the
+// existing record (created=false) instead of an error - the caller decides
+// whether this is a retry, a reuse or concurrent processing.
 func (r *Repository) BeginIdempotency(ctx context.Context, record IdempotencyRecord) (IdempotencyRecord, bool, error) {
 	record.State = "processing"
 	record.CreatedAt = time.Now().UTC()
@@ -56,7 +56,7 @@ func (r *Repository) BeginIdempotency(ctx context.Context, record IdempotencyRec
 	return IdempotencyRecord{}, false, fmt.Errorf("storage: begin idempotency: %w", err)
 }
 
-// FindIdempotency возвращает запись по ключу мерчанта.
+// FindIdempotency returns the record by the merchant key.
 func (r *Repository) FindIdempotency(ctx context.Context, merchantID, key string) (IdempotencyRecord, error) {
 	var record IdempotencyRecord
 	err := r.db.WithContext(ctx).
@@ -71,9 +71,9 @@ func (r *Repository) FindIdempotency(ctx context.Context, merchantID, key string
 	return record, nil
 }
 
-// CompleteIdempotency сохраняет снимок успешного ответа поверх конкретной
-// попытки (id записи) с тем же отпечатком: устаревшая попытка не может
-// завершить строку нового исполнения (fencing). Отсутствие подходящей строки -
+// CompleteIdempotency saves the successful response snapshot over a specific
+// attempt (record id) with the same fingerprint: a stale attempt cannot
+// complete the row of a new execution (fencing). No matching row is
 // ErrStatusConflict.
 func (r *Repository) CompleteIdempotency(ctx context.Context, recordID string, requestHash []byte, status int, contentType string, body []byte) error {
 	now := time.Now().UTC()
@@ -95,9 +95,9 @@ func (r *Repository) CompleteIdempotency(ctx context.Context, recordID string, r
 	return nil
 }
 
-// DeleteIdempotencyAttempt удаляет конкретную попытку в ожидаемом состоянии:
-// abort обработчика (processing), истечение окна (completed) и брошенная
-// обработка (processing). Смена состояния конкурентом - ErrStatusConflict.
+// DeleteIdempotencyAttempt deletes a specific attempt in the expected state:
+// a handler abort (processing), window expiry (completed) and an abandoned
+// execution (processing). A concurrent state change is ErrStatusConflict.
 func (r *Repository) DeleteIdempotencyAttempt(ctx context.Context, recordID, expectedState string) error {
 	result := r.db.WithContext(ctx).
 		Where("id = ? AND state = ?", recordID, expectedState).

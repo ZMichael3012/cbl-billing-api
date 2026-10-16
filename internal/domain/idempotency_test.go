@@ -18,15 +18,15 @@ func TestRequestFingerprint(t *testing.T) {
 	require.Len(t, base, 32)
 
 	assert.True(t, bytes.Equal(base, domain.RequestFingerprint("POST", "/v1/invoices", []byte(`{"a":1}`))),
-		"отпечаток детерминирован")
+		"the fingerprint is deterministic")
 	assert.False(t, bytes.Equal(base, domain.RequestFingerprint("POST", "/v1/invoices", []byte(`{"a":2}`))),
-		"другое тело - другой отпечаток")
+		"a different body yields a different fingerprint")
 	assert.False(t, bytes.Equal(base, domain.RequestFingerprint("POST", "/v1/payouts", []byte(`{"a":1}`))),
-		"другой путь - другой отпечаток")
+		"a different path yields a different fingerprint")
 	assert.False(t, bytes.Equal(base, domain.RequestFingerprint("PUT", "/v1/invoices", []byte(`{"a":1}`))),
-		"другой метод - другой отпечаток")
+		"a different method yields a different fingerprint")
 	assert.False(t, bytes.Equal(base, domain.RequestFingerprint("POST", "/v1/invoices", []byte(`{"a":1} `))),
-		"пробел в хвосте тела значим (хэш сырого тела)")
+		"a trailing space in the body matters (raw body hash)")
 }
 
 func TestValidateIdempotencyKey(t *testing.T) {
@@ -39,13 +39,13 @@ func TestValidateIdempotencyKey(t *testing.T) {
 	require.ErrorIs(t, err, domain.ErrMissingIdempotencyKey)
 
 	for _, invalid := range []string{
-		"short7c", // меньше 8 символов
+		"short7c", // fewer than 8 characters
 		strings.Repeat("a", 129),
 		"key with space",
 		"key/slash",
 		"ключ-кириллица",
 	} {
 		err := domain.ValidateIdempotencyKey(invalid)
-		require.ErrorIs(t, err, domain.ErrInvalidIdempotencyKey, "ключ %q", invalid)
+		require.ErrorIs(t, err, domain.ErrInvalidIdempotencyKey, "key %q", invalid)
 	}
 }

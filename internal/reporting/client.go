@@ -1,5 +1,5 @@
-// Пакет reporting оборачивает gRPC-клиент ReportingService для прокси
-// отчетов мерчант API (CBL-11.4).
+// Package reporting wraps the ReportingService gRPC client for the merchant
+// API reports proxy (CBL-11.4).
 package reporting
 
 import (
@@ -18,54 +18,54 @@ import (
 	reportingv1 "github.com/cbl/cbl-protos/gen/go/billing/reporting/v1"
 )
 
-// Доменные ошибки прокси (транспорт переводит их в problem+json).
+// Proxy domain errors (the transport translates them into problem+json).
 var (
-	// ErrUnknownReportType означает тип отчета вне каталога Reporting.
+	// ErrUnknownReportType means a report type outside the Reporting catalog.
 	ErrUnknownReportType = errors.New("unknown report type")
-	// ErrInvalidQuery означает недопустимые параметры отчета.
+	// ErrInvalidQuery means invalid report parameters.
 	ErrInvalidQuery = errors.New("invalid report query")
-	// ErrUnavailable означает недоступность или таймаут Reporting.
+	// ErrUnavailable means Reporting is unavailable or timed out.
 	ErrUnavailable = errors.New("reporting unavailable")
 )
 
-// Query описывает параметры отчета для Reporting.
+// Query describes report parameters for Reporting.
 type Query struct {
-	// ReportType задает тип отчета из каталога.
+	// ReportType sets the report type from the catalog.
 	ReportType string
-	// MerchantID задает мерчанта (всегда из токена при проксировании).
+	// MerchantID sets the merchant (always from the token when proxying).
 	MerchantID string
-	// PeriodFrom задает нижнюю границу периода.
+	// PeriodFrom sets the lower period bound.
 	PeriodFrom *time.Time
-	// PeriodTo задает верхнюю границу периода.
+	// PeriodTo sets the upper period bound.
 	PeriodTo *time.Time
-	// GroupBy задает измерение группировки.
+	// GroupBy sets the grouping dimension.
 	GroupBy string
-	// Limit задает размер страницы (0 - дефолт Reporting).
+	// Limit sets the page size (0 - the Reporting default).
 	Limit uint32
-	// Cursor задает непрозрачный курсор продолжения.
+	// Cursor sets the opaque continuation cursor.
 	Cursor string
 }
 
-// Row описывает строку отчета (значения - строки).
+// Row describes a report row (values are strings).
 type Row map[string]string
 
-// Page описывает страницу отчета.
+// Page describes a report page.
 type Page struct {
-	// Rows задает строки страницы.
+	// Rows sets the page rows.
 	Rows []Row
-	// NextCursor задает курсор следующей страницы.
+	// NextCursor sets the next page cursor.
 	NextCursor string
 }
 
-// Client оборачивает gRPC-клиент ReportingService с общим таймаутом вызовов.
+// Client wraps the ReportingService gRPC client with a shared call timeout.
 type Client struct {
 	conn    *grpc.ClientConn
 	svc     reportingv1.ReportingServiceClient
 	timeout time.Duration
 }
 
-// NewClient подключается к ReportingService по адресу host:port (plaintext
-// внутри доверенной сети; mTLS - 0.6); соединение ленивое.
+// NewClient connects to ReportingService at host:port (plaintext inside the
+// trusted network; mTLS comes in 0.6); the connection is lazy.
 func NewClient(addr string, timeout time.Duration) (*Client, error) {
 	if _, _, err := net.SplitHostPort(addr); err != nil {
 		return nil, fmt.Errorf("reporting addr %q: %w", addr, err)
@@ -80,13 +80,13 @@ func NewClient(addr string, timeout time.Duration) (*Client, error) {
 	return &Client{conn: conn, svc: reportingv1.NewReportingServiceClient(conn), timeout: timeout}, nil
 }
 
-// Close закрывает gRPC-соединение.
+// Close closes the gRPC connection.
 func (c *Client) Close() error {
 	return c.conn.Close()
 }
 
-// Query возвращает страницу отчета; классификация ошибок - доменными
-// sentinel-ошибками (NotFound/InvalidArgument/прочее).
+// Query returns a report page; errors are classified with domain sentinel
+// errors (NotFound/InvalidArgument/other).
 func (c *Client) Query(ctx context.Context, query Query) (Page, error) {
 	callCtx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
@@ -114,8 +114,8 @@ func (c *Client) Query(ctx context.Context, query Query) (Page, error) {
 	return Page{Rows: rows, NextCursor: response.GetNextCursor()}, nil
 }
 
-// classify переводит статус gRPC в доменные ошибки прокси (исходная ошибка
-// сохраняется в цепочке для диагностики деградации).
+// classify translates a gRPC status into proxy domain errors (the original
+// error is kept in the chain for degradation diagnostics).
 func classify(err error) error {
 	st, ok := status.FromError(err)
 	if !ok {

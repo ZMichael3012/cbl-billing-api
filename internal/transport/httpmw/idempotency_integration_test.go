@@ -32,15 +32,15 @@ import (
 	"github.com/cbl/cbl-billing-api/internal/usecase"
 )
 
-// idempotencyStand описывает стенд проверки идемпотентности.
+// idempotencyStand describes the idempotency verification stand.
 type idempotencyStand struct {
 	router      *gin.Engine
 	successHits *int64
 	errorHits   *int64
 }
 
-// setupIdempotencyStand поднимает PostgreSQL и Redis, собирает сервис и
-// маршруты-пробы за middleware.
+// setupIdempotencyStand starts PostgreSQL and Redis, builds the service and
+// probe routes behind the middleware.
 func setupIdempotencyStand(t *testing.T) *idempotencyStand {
 	t.Helper()
 	ctx := context.Background()
@@ -93,8 +93,8 @@ func setupIdempotencyStand(t *testing.T) *idempotencyStand {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	group := router.Group("/v1",
-		// Аутентификация подменяется заглушкой: проверяем только слой
-		// идемпотентности за Require.
+		// Authentication is replaced with a stub: we verify only the
+		// idempotency layer behind Require.
 		httpmw.Require(func(context.Context, string) (string, error) { return "m-1", nil }),
 		httpmw.Idempotency(idempotency),
 	)
@@ -109,7 +109,7 @@ func setupIdempotencyStand(t *testing.T) *idempotencyStand {
 	return &idempotencyStand{router: router, successHits: successHits, errorHits: errorHits}
 }
 
-// doIdempotencyRequest выполняет POST с ключом и телом.
+// doIdempotencyRequest performs a POST with a key and a body.
 func doIdempotencyRequest(router *gin.Engine, path, key, body string) *httptest.ResponseRecorder {
 	request := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
 	request.Header.Set("Authorization", "Bearer test-token")
@@ -128,14 +128,14 @@ func TestIntegrationIdempotencyReplayAndReuse(t *testing.T) {
 	assert.Empty(t, first.Header().Get("Idempotent-Replayed"))
 	assert.Equal(t, int64(1), atomic.LoadInt64(stand.successHits))
 
-	// Повтор: тот же ответ, обработчик не выполняется.
+	// Retry: the same response, the handler is not executed.
 	replay := doIdempotencyRequest(stand.router, "/v1/ok", "key-00000001", `{"a":1}`)
 	require.Equal(t, http.StatusCreated, replay.Code)
 	assert.Equal(t, "true", replay.Header().Get("Idempotent-Replayed"))
-	assert.Equal(t, first.Body.String(), replay.Body.String(), "байты тела совпадают")
-	assert.Equal(t, int64(1), atomic.LoadInt64(stand.successHits), "повторный эффект исключен")
+	assert.Equal(t, first.Body.String(), replay.Body.String(), "the body bytes match")
+	assert.Equal(t, int64(1), atomic.LoadInt64(stand.successHits), "a repeated effect is excluded")
 
-	// Другое тело с тем же ключом: 409.
+	// A different body with the same key: 409.
 	reuse := doIdempotencyRequest(stand.router, "/v1/ok", "key-00000001", `{"a":2}`)
 	require.Equal(t, http.StatusConflict, reuse.Code)
 	var problem map[string]any
@@ -151,12 +151,12 @@ func TestIntegrationIdempotencyErrorsNotCached(t *testing.T) {
 	require.Equal(t, http.StatusUnprocessableEntity, first.Code)
 	assert.Equal(t, int64(1), atomic.LoadInt64(stand.errorHits))
 
-	// Ошибка не занимает ключ: повтор выполняется заново.
+	// An error does not occupy the key: the retry is executed again.
 	second := doIdempotencyRequest(stand.router, "/v1/fail", "key-00000002", `{"a":1}`)
 	require.Equal(t, http.StatusUnprocessableEntity, second.Code)
-	assert.Equal(t, int64(2), atomic.LoadInt64(stand.errorHits), "ошибки повторяются")
+	assert.Equal(t, int64(2), atomic.LoadInt64(stand.errorHits), "errors are repeated")
 	assert.Empty(t, second.Header().Get("Idempotent-Replayed"))
-	assert.NotEqual(t, first.Body.String(), second.Body.String(), "ответы обработчика различаются")
+	assert.NotEqual(t, first.Body.String(), second.Body.String(), "the handler responses differ")
 }
 
 func TestIntegrationIdempotencyConcurrent(t *testing.T) {
@@ -173,14 +173,14 @@ func TestIntegrationIdempotencyConcurrent(t *testing.T) {
 	}
 	waitGroup.Wait()
 
-	// Обработчик выполняется ровно один раз (счетчик): конкурент получает
-	// 409, если застал processing, или реплей, если первый успел завершиться.
-	assert.Equal(t, int64(1), atomic.LoadInt64(stand.successHits), "ровно один запуск обработчика")
+	// The handler runs exactly once (counter): a concurrent request gets 409 if
+	// it caught processing, or a replay if the first one managed to finish.
+	assert.Equal(t, int64(1), atomic.LoadInt64(stand.successHits), "exactly one handler run")
 	for _, status := range statuses {
 		assert.Contains(t, []int{http.StatusCreated, http.StatusConflict}, status)
 	}
 
-	// Повтор после завершения отдает сохраненный ответ.
+	// A retry after completion returns the saved response.
 	replay := doIdempotencyRequest(stand.router, "/v1/ok", "key-00000003", `{"a":1}`)
 	assert.Equal(t, http.StatusCreated, replay.Code)
 	assert.Equal(t, "true", replay.Header().Get("Idempotent-Replayed"))

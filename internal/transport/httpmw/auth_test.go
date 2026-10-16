@@ -16,8 +16,8 @@ import (
 	"github.com/cbl/cbl-billing-api/internal/domain"
 )
 
-// newProbeRouter собирает роутер с middleware и пробным маршрутом,
-// возвращающим мерчанта из контекста.
+// newProbeRouter builds a router with the middleware and a probe route
+// returning the merchant from the context.
 func newProbeRouter(verify Verifier) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
@@ -27,7 +27,7 @@ func newProbeRouter(verify Verifier) *gin.Engine {
 	return router
 }
 
-// doProbe выполняет запрос к пробному маршруту.
+// doProbe performs a request to the probe route.
 func doProbe(router *gin.Engine, authorization string) *httptest.ResponseRecorder {
 	request := httptest.NewRequest(http.MethodGet, "/v1/probe", nil)
 	if authorization != "" {
@@ -42,18 +42,18 @@ func TestRequireRejections(t *testing.T) {
 	t.Parallel()
 
 	verify := func(context.Context, string) (string, error) {
-		t.Fatal("верификатор не должен вызываться для битых заголовков")
+		t.Fatal("the verifier must not be called for malformed headers")
 		return "", nil
 	}
 	router := newProbeRouter(verify)
 
 	for name, header := range map[string]string{
-		"нет заголовка":    "",
-		"другая схема":     "Basic abc",
-		"пустой токен":     "Bearer ",
-		"пробел внутри":    "Bearer a b",
-		"только схема":     "Bearer",
-		"пустой заголовок": " ",
+		"no header":    "",
+		"other scheme": "Basic abc",
+		"empty token":  "Bearer ",
+		"space inside": "Bearer a b",
+		"scheme only":  "Bearer",
+		"empty header": " ",
 	} {
 		recorder := doProbe(router, header)
 		assert.Equal(t, http.StatusUnauthorized, recorder.Code, name)
@@ -65,13 +65,13 @@ func TestRequireRejections(t *testing.T) {
 	}
 }
 
-// TestRequireDuplicateAuthorizationHeader проверяет отказ при двух заголовках:
-// разноголосица двух ключей не допускается.
+// TestRequireDuplicateAuthorizationHeader verifies rejection with two headers:
+// disagreement of two keys is not allowed.
 func TestRequireDuplicateAuthorizationHeader(t *testing.T) {
 	t.Parallel()
 
 	verify := func(context.Context, string) (string, error) {
-		t.Fatal("верификатор не должен вызываться при дублях заголовка")
+		t.Fatal("the verifier must not be called with duplicate headers")
 		return "", nil
 	}
 	router := newProbeRouter(verify)
@@ -101,7 +101,7 @@ func TestRequireDependencyFailure(t *testing.T) {
 		return "", errors.New("postgres down")
 	})
 	recorder := doProbe(router, "Bearer cbl_v1_0011223344_abcdefghijklmnopqrstuvwxyz0123456789ABCDE")
-	assert.Equal(t, http.StatusServiceUnavailable, recorder.Code, "отказ зависимости, не клиента")
+	assert.Equal(t, http.StatusServiceUnavailable, recorder.Code, "dependency failure, not client")
 	assert.Equal(t, "1", recorder.Header().Get("Retry-After"))
 }
 
@@ -114,7 +114,7 @@ func TestRequireSuccess(t *testing.T) {
 		return "m-1", nil
 	})
 	recorder := doProbe(router, "bearer cbl_v1_0011223344_abcdefghijklmnopqrstuvwxyz0123456789ABCDE")
-	require.Equal(t, http.StatusOK, recorder.Code, "схема Bearer регистронезависима")
+	require.Equal(t, http.StatusOK, recorder.Code, "the Bearer scheme is case-insensitive")
 	assert.Equal(t, "cbl_v1_0011223344_abcdefghijklmnopqrstuvwxyz0123456789ABCDE", gotToken)
 	assert.Contains(t, recorder.Body.String(), `"merchant_id":"m-1"`)
 }

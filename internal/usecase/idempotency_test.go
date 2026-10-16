@@ -16,10 +16,10 @@ import (
 	"github.com/cbl/cbl-billing-api/internal/storage"
 )
 
-// fakeIdempotencyStore подменяет журнал идемпотентности с fencing по id
-// попытки: завершение и удаление адресуются конкретной записи.
+// fakeIdempotencyStore replaces the idempotency journal with fencing by attempt
+// id: completion and deletion address a specific record.
 type fakeIdempotencyStore struct {
-	records     map[string]storage.IdempotencyRecord // по merchant|key
+	records     map[string]storage.IdempotencyRecord // by merchant|key
 	byID        map[string]string                    // id -> merchant|key
 	beginErr    error
 	completeErr error
@@ -28,7 +28,7 @@ type fakeIdempotencyStore struct {
 	completed   []string
 }
 
-// newFakeIdempotencyStore создает пустой журнал.
+// newFakeIdempotencyStore creates an empty journal.
 func newFakeIdempotencyStore() *fakeIdempotencyStore {
 	return &fakeIdempotencyStore{
 		records: map[string]storage.IdempotencyRecord{},
@@ -36,7 +36,7 @@ func newFakeIdempotencyStore() *fakeIdempotencyStore {
 	}
 }
 
-// idemKey собирает ключ карты фейка.
+// idemKey assembles the fake map key.
 func idemKey(merchantID, key string) string { return merchantID + "|" + key }
 
 func (s *fakeIdempotencyStore) BeginIdempotency(_ context.Context, record storage.IdempotencyRecord) (storage.IdempotencyRecord, bool, error) {
@@ -54,8 +54,8 @@ func (s *fakeIdempotencyStore) BeginIdempotency(_ context.Context, record storag
 	return record, true, nil
 }
 
-// locate ищет ключ карты по идентификатору записи (фейк терпим к записям,
-// добавленным напрямую в records без индекса byID).
+// locate finds the map key by record id (the fake tolerates records added
+// directly to records without the byID index).
 func (s *fakeIdempotencyStore) locate(recordID string) (string, bool) {
 	if mapKey, ok := s.byID[recordID]; ok {
 		return mapKey, true
@@ -110,7 +110,7 @@ func (s *fakeIdempotencyStore) DeleteIdempotencyAttempt(_ context.Context, recor
 	return nil
 }
 
-// newTestIdempotency собирает сервис с фейками и фиксированными часами.
+// newTestIdempotency builds the service with fakes and a fixed clock.
 func newTestIdempotency(t *testing.T, store IdempotencyStore, cache KeyCache) (*Idempotency, time.Time) {
 	t.Helper()
 	now := time.Date(2026, 10, 15, 12, 0, 0, 0, time.UTC)
@@ -123,7 +123,7 @@ func newTestIdempotency(t *testing.T, store IdempotencyStore, cache KeyCache) (*
 	return service, now
 }
 
-// testFingerprint возвращает отпечаток тела для пробного маршрута.
+// testFingerprint returns the body fingerprint for the probe route.
 func testFingerprint(t *testing.T, body string) []byte {
 	t.Helper()
 	return domain.RequestFingerprint("POST", "/v1/invoices", []byte(body))
@@ -136,10 +136,10 @@ func TestNewIdempotencyConfig(t *testing.T) {
 	require.ErrorIs(t, err, ErrIdempotencyStoreRequired)
 
 	cases := map[string]IdempotencyConfig{
-		"ttl меньше часа":         {TTL: time.Minute, ProcessingTimeout: time.Minute},
-		"ttl больше недели":       {TTL: 8 * 24 * time.Hour, ProcessingTimeout: time.Minute},
-		"таймаут меньше 30с":      {TTL: time.Hour, ProcessingTimeout: 10 * time.Second},
-		"таймаут больше 15 минут": {TTL: time.Hour, ProcessingTimeout: 20 * time.Minute},
+		"ttl below an hour":    {TTL: time.Minute, ProcessingTimeout: time.Minute},
+		"ttl above a week":     {TTL: 8 * 24 * time.Hour, ProcessingTimeout: time.Minute},
+		"timeout below 30s":    {TTL: time.Hour, ProcessingTimeout: 10 * time.Second},
+		"timeout above 15 min": {TTL: time.Hour, ProcessingTimeout: 20 * time.Minute},
 	}
 	for name, cfg := range cases {
 		_, err := NewIdempotency(newFakeIdempotencyStore(), nil, nil, cfg)
@@ -170,16 +170,16 @@ func TestIdempotencyBeginProceedAndReplay(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(cachedRaw), &cached))
 	assert.Equal(t, 201, cached.Status)
 	assert.Equal(t, now, cached.CompletedAt)
-	assert.Equal(t, 24*time.Hour, cache.lastTTL, "свежая запись кэшируется на полное окно")
+	assert.Equal(t, 24*time.Hour, cache.lastTTL, "a fresh record is cached for the full window")
 
-	// Повтор: реплей из кэша без похода в журнал.
+	// Retry: replay from the cache without touching the journal.
 	decision, err = service.Begin(ctx, "m-1", "key-00000001", fingerprint)
 	require.NoError(t, err)
 	require.Equal(t, DecisionReplay, decision.Kind)
 	assert.Equal(t, 201, decision.Replay.Status)
 	assert.Equal(t, `{"id":"inv-1"}`, string(decision.Replay.Body))
 
-	// Переиспользование ключа с другим телом.
+	// Key reuse with a different body.
 	other := testFingerprint(t, `{"a":2}`)
 	decision, err = service.Begin(ctx, "m-1", "key-00000001", other)
 	require.NoError(t, err)
@@ -196,7 +196,7 @@ func TestIdempotencyBeginFromPostgres(t *testing.T) {
 	ctx := context.Background()
 	fingerprint := testFingerprint(t, `{"a":1}`)
 
-	// Готовим completed-запись напрямую (имитация прошлого процесса).
+	// We prepare a completed record directly (simulating a previous process).
 	completedAt := now.Add(-time.Hour)
 	status := 200
 	contentType := "application/json"
@@ -218,10 +218,10 @@ func TestIdempotencyBeginFromPostgres(t *testing.T) {
 	require.Equal(t, DecisionReplay, decision.Kind)
 	assert.Equal(t, 200, decision.Replay.Status)
 
-	// Реплей из БД заполняет кэш остатком окна, а не полным TTL.
+	// A replay from the database fills the cache with the remaining window, not the full TTL.
 	cachedRaw := cache.values[idempotencyCachePrefix+"m-1:key-00000002"]
 	require.NotEmpty(t, cachedRaw)
-	assert.Equal(t, 23*time.Hour, cache.lastTTL, "TTL кэша ограничен остатком окна")
+	assert.Equal(t, 23*time.Hour, cache.lastTTL, "the cache TTL is limited by the remaining window")
 }
 
 func TestIdempotencyCacheMismatchFallsToPostgres(t *testing.T) {
@@ -233,7 +233,7 @@ func TestIdempotencyCacheMismatchFallsToPostgres(t *testing.T) {
 	ctx := context.Background()
 	fingerprint := testFingerprint(t, `{"a":1}`)
 
-	// Подмена значения кэша (чужой хэш) не дает оракула 409: решает БД.
+	// A cache value substitution (foreign hash) does not give a 409 oracle: the database decides.
 	cacheKey := idempotencyCachePrefix + "m-1:key-0000000c"
 	cached := cachedIdempotency{
 		Hash:        fmt.Sprintf("%x", testFingerprint(t, `{"other":1}`)),
@@ -248,7 +248,7 @@ func TestIdempotencyCacheMismatchFallsToPostgres(t *testing.T) {
 
 	decision, err := service.Begin(ctx, "m-1", "key-0000000c", fingerprint)
 	require.NoError(t, err)
-	assert.Equal(t, DecisionProceed, decision.Kind, "чужой хэш кэша не блокирует запрос")
+	assert.Equal(t, DecisionProceed, decision.Kind, "a foreign cache hash does not block the request")
 }
 
 func TestIdempotencyCacheExpiredFallsToPostgres(t *testing.T) {
@@ -274,8 +274,8 @@ func TestIdempotencyCacheExpiredFallsToPostgres(t *testing.T) {
 
 	decision, err := service.Begin(ctx, "m-1", "key-0000000d", fingerprint)
 	require.NoError(t, err)
-	assert.Equal(t, DecisionProceed, decision.Kind, "истекшее окно кэша не обслуживается")
-	assert.Contains(t, cache.deleted, cacheKey, "истекшее значение удаляется")
+	assert.Equal(t, DecisionProceed, decision.Kind, "an expired cache window is not served")
+	assert.Contains(t, cache.deleted, cacheKey, "the expired value is deleted")
 }
 
 func TestIdempotencyCacheMalformedFallsToPostgres(t *testing.T) {
@@ -292,15 +292,16 @@ func TestIdempotencyCacheMalformedFallsToPostgres(t *testing.T) {
 
 	decision, err := service.Begin(ctx, "m-1", "key-0000000e", fingerprint)
 	require.NoError(t, err)
-	assert.Equal(t, DecisionProceed, decision.Kind, "порча кэша деградирует в БД")
+	assert.Equal(t, DecisionProceed, decision.Kind, "cache corruption degrades to the database")
 
-	// Валидный JSON с нулевым статусом также не принимается: проверяется на
-	// свежем ключе (предыдущий уже захвачен в обработку и вернул бы conflict).
+	// Valid JSON with a zero status is also not accepted: it is checked on a
+	// fresh key (the previous one is already captured into processing and would
+	// return a conflict).
 	zeroKey := idempotencyCachePrefix + "m-1:key-0000000f"
 	cache.values[zeroKey] = `{"hash":"` + fmt.Sprintf("%x", fingerprint) + `","status":0,"content_type":"","body_base64":"","completed_at":"2026-10-15T12:00:00Z"}`
 	decision, err = service.Begin(ctx, "m-1", "key-0000000f", fingerprint)
 	require.NoError(t, err)
-	assert.Equal(t, DecisionProceed, decision.Kind, "нулевой статус кэша не обслуживается")
+	assert.Equal(t, DecisionProceed, decision.Kind, "a zero cache status is not served")
 }
 
 func TestIdempotencyBeginExpiredWindow(t *testing.T) {
@@ -326,9 +327,9 @@ func TestIdempotencyBeginExpiredWindow(t *testing.T) {
 
 	decision, err := service.Begin(ctx, "m-1", "key-00000003", fingerprint)
 	require.NoError(t, err)
-	assert.Equal(t, DecisionProceed, decision.Kind, "окно истекло: запрос выполняется заново")
+	assert.Equal(t, DecisionProceed, decision.Kind, "the window has expired: the request is executed again")
 	assert.Contains(t, store.deleted, "018f0000-0000-7000-8000-000000000003")
-	assert.NotEqual(t, "018f0000-0000-7000-8000-000000000003", decision.AttemptID, "новая попытка получает свой id")
+	assert.NotEqual(t, "018f0000-0000-7000-8000-000000000003", decision.AttemptID, "the new attempt gets its own id")
 }
 
 func TestIdempotencyBeginInProgress(t *testing.T) {
@@ -352,7 +353,7 @@ func TestIdempotencyBeginInProgress(t *testing.T) {
 	require.Equal(t, DecisionConflict, decision.Kind)
 	assert.ErrorIs(t, decision.Reason, domain.ErrIdempotencyInProgress)
 
-	// Брошенная обработка переобрабатывается после таймаута.
+	// An abandoned processing is reprocessed after the timeout.
 	store.records[idemKey("m-1", "key-00000004")] = storage.IdempotencyRecord{
 		ID:          "018f0000-0000-7000-8000-000000000004",
 		MerchantID:  "m-1",
@@ -366,8 +367,8 @@ func TestIdempotencyBeginInProgress(t *testing.T) {
 	assert.Equal(t, DecisionProceed, decision.Kind)
 }
 
-// TestIdempotencyStaleAttemptFencing проверяет, что завершение или отмена
-// устаревшей попытки не затрагивают строку нового исполнения.
+// TestIdempotencyStaleAttemptFencing verifies that completion or cancellation
+// of a stale attempt does not affect the record of a new execution.
 func TestIdempotencyStaleAttemptFencing(t *testing.T) {
 	t.Parallel()
 
@@ -376,12 +377,12 @@ func TestIdempotencyStaleAttemptFencing(t *testing.T) {
 	ctx := context.Background()
 	fingerprint := testFingerprint(t, `{"a":1}`)
 
-	// Попытка A стартует и «зависает».
+	// Attempt A starts and hangs.
 	first, err := service.Begin(ctx, "m-1", "key-0000000f", fingerprint)
 	require.NoError(t, err)
 	require.Equal(t, DecisionProceed, first.Kind)
 
-	// Через таймаут попытка B переиспользует ключ.
+	// After the timeout attempt B reuses the key.
 	record := store.records[idemKey("m-1", "key-0000000f")]
 	record.CreatedAt = now.Add(-3 * time.Minute)
 	store.records[idemKey("m-1", "key-0000000f")] = record
@@ -390,17 +391,17 @@ func TestIdempotencyStaleAttemptFencing(t *testing.T) {
 	require.Equal(t, DecisionProceed, second.Kind)
 	require.NotEqual(t, first.AttemptID, second.AttemptID)
 
-	// Поздний успех A не завершает строку B (fencing по id).
+	// A late success of A does not complete the record of B (fencing by id).
 	require.NoError(t, service.Finish(ctx, "m-1", "key-0000000f", first.AttemptID, fingerprint, 201, "application/json", []byte(`{"stale":true}`), false))
 	stored := store.records[idemKey("m-1", "key-0000000f")]
 	assert.Equal(t, second.AttemptID, stored.ID)
-	assert.Equal(t, "processing", stored.State, "устаревшая попытка не завершила новую")
+	assert.Equal(t, "processing", stored.State, "the stale attempt did not complete the new one")
 
-	// Поздняя ошибка A не удаляет строку B.
+	// A late error of A does not delete the record of B.
 	require.NoError(t, service.Finish(ctx, "m-1", "key-0000000f", first.AttemptID, fingerprint, 422, "application/problem+json", nil, false))
-	assert.Contains(t, store.records, idemKey("m-1", "key-0000000f"), "устаревшая попытка не освободила новую")
+	assert.Contains(t, store.records, idemKey("m-1", "key-0000000f"), "the stale attempt did not release the new one")
 
-	// Новое исполнение завершается успешно.
+	// The new execution completes successfully.
 	require.NoError(t, service.Finish(ctx, "m-1", "key-0000000f", second.AttemptID, fingerprint, 201, "application/json", []byte(`{"fresh":true}`), false))
 	assert.Equal(t, "completed", store.records[idemKey("m-1", "key-0000000f")].State)
 }
@@ -414,36 +415,36 @@ func TestIdempotencyFinishAbortAndOverflow(t *testing.T) {
 	ctx := context.Background()
 	fingerprint := testFingerprint(t, `{"a":1}`)
 
-	// Ошибка обработчика освобождает ключ.
+	// A handler error releases the key.
 	decision, err := service.Begin(ctx, "m-1", "key-00000005", fingerprint)
 	require.NoError(t, err)
 	require.Equal(t, DecisionProceed, decision.Kind)
 	require.NoError(t, service.Finish(ctx, "m-1", "key-00000005", decision.AttemptID, fingerprint, 422, "application/problem+json", []byte(`{}`), false))
-	assert.Empty(t, store.records[idemKey("m-1", "key-00000005")], "ошибка не занимает ключ")
-	assert.Empty(t, cache.setCalls, "ошибка не кэшируется")
+	assert.Empty(t, store.records[idemKey("m-1", "key-00000005")], "an error does not occupy the key")
+	assert.Empty(t, cache.setCalls, "an error is not cached")
 
-	// Успех: ключ занят и кэширован.
+	// Success: the key is occupied and cached.
 	decision, err = service.Begin(ctx, "m-1", "key-00000006", fingerprint)
 	require.NoError(t, err)
 	require.Equal(t, DecisionProceed, decision.Kind)
 	require.NoError(t, service.Finish(ctx, "m-1", "key-00000006", decision.AttemptID, fingerprint, 201, "application/json", []byte(`{"ok":true}`), false))
 	assert.Equal(t, "completed", store.records[idemKey("m-1", "key-00000006")].State)
-	assert.Equal(t, 24*time.Hour, cache.lastTTL, "свежий успех кэшируется на полное окно")
+	assert.Equal(t, 24*time.Hour, cache.lastTTL, "a fresh success is cached for the full window")
 
-	// Переполнение снимка: ключ освобождается, кэш не пишется.
+	// Snapshot overflow: the key is released, the cache is not written.
 	decision, err = service.Begin(ctx, "m-1", "key-00000007", fingerprint)
 	require.NoError(t, err)
 	require.Equal(t, DecisionProceed, decision.Kind)
 	require.NoError(t, service.Finish(ctx, "m-1", "key-00000007", decision.AttemptID, fingerprint, 200, "application/json", nil, true))
 	assert.Empty(t, store.records[idemKey("m-1", "key-00000007")])
 
-	// Сбой фиксации в PG: ответ уже вычислен, снимок уходит в Redis.
+	// A commit failure in PG: the response is already computed, the snapshot goes to Redis.
 	store.completeErr = errors.New("postgres down")
 	decision, err = service.Begin(ctx, "m-1", "key-00000008", fingerprint)
 	require.NoError(t, err)
 	require.Equal(t, DecisionProceed, decision.Kind)
 	require.NoError(t, service.Finish(ctx, "m-1", "key-00000008", decision.AttemptID, fingerprint, 201, "application/json", []byte(`{"x":1}`), false))
-	assert.NotEmpty(t, cache.values[idempotencyCachePrefix+"m-1:key-00000008"], "best-effort кэш при сбое PG")
+	assert.NotEmpty(t, cache.values[idempotencyCachePrefix+"m-1:key-00000008"], "best-effort cache on a PG failure")
 }
 
 func TestIdempotencyBeginStoreFailure(t *testing.T) {
@@ -454,5 +455,5 @@ func TestIdempotencyBeginStoreFailure(t *testing.T) {
 	store.beginErr = fmt.Errorf("postgres down")
 
 	_, err := service.Begin(context.Background(), "m-1", "key-00000009", testFingerprint(t, `{}`))
-	require.Error(t, err, "сбой журнала не маскируется: middleware ответит 503")
+	require.Error(t, err, "a journal failure is not masked: the middleware will respond 503")
 }

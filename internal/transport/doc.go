@@ -1,3 +1,3 @@
-// Пакет transport содержит транспортный слой сервиса billing-api: HTTP-хендлеры
-// Gin (прокси отчетов /v1/reports) и middleware-композицию из usecase.
+// Package transport contains the transport layer of the billing-api service:
+// Gin HTTP handlers (the /v1/reports proxy) and the middleware composition from usecase.
 package transport
