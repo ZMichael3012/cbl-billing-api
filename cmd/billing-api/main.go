@@ -20,7 +20,9 @@ import (
 	"github.com/cbl/cbl-kit/ginmw"
 	"github.com/cbl/cbl-kit/storagex"
 
+	"github.com/cbl/cbl-billing-api/internal/reporting"
 	"github.com/cbl/cbl-billing-api/internal/storage"
+	"github.com/cbl/cbl-billing-api/internal/transport"
 	"github.com/cbl/cbl-billing-api/internal/transport/httpmw"
 	"github.com/cbl/cbl-billing-api/internal/usecase"
 )
@@ -32,6 +34,7 @@ const (
 	defaultGrace            = 24 * time.Hour
 	defaultIdempotencyTTL   = 24 * time.Hour
 	defaultProcessingExpiry = 2 * time.Minute
+	defaultReportingTimeout = 5 * time.Second
 )
 
 // main запускает сервис и завершает процесс ненулевым кодом при ошибке
@@ -144,6 +147,31 @@ func run() error {
 		zap.Duration("ttl", idempotencyTTL),
 		zap.Duration("processing_timeout", processingTimeout))
 
+	// Отчетность (11.4): адрес Reporting опционален - без него прокси /v1/reports
+	// отвечает 503, остальной мерчант API работает. Таймаут читается и
+	// валидируется безусловно (границы меньше серверного WriteTimeout).
+	var reportsClient transport.ReportsClient
+	reportingTimeout, err := durationEnv("REPORTING_TIMEOUT", defaultReportingTimeout)
+	if err != nil {
+		return err
+	}
+	if reportingTimeout < time.Second || reportingTimeout > 10*time.Second {
+		return fmt.Errorf("REPORTING_TIMEOUT is out of range: %s", reportingTimeout)
+	}
+	reportingAddr := os.Getenv("REPORTING_GRPC_ADDR")
+	if reportingAddr != "" {
+		client, err := reporting.NewClient(reportingAddr, reportingTimeout)
+		if err != nil {
+			return fmt.Errorf("reporting client: %w", err)
+		}
+		defer func() { _ = client.Close() }()
+		reportsClient = client
+		log.Info("reports proxy configured",
+			zap.String("addr", reportingAddr), zap.Duration("timeout", reportingTimeout))
+	} else {
+		log.Warn("REPORTING_GRPC_ADDR is empty: /v1/reports responds 503")
+	}
+
 	router := gin.New()
 	router.Use(ginmw.RequestID(), ginmw.AccessLog(log), ginmw.Recovery(log))
 	router.GET("/healthz", func(c *gin.Context) {
@@ -159,15 +187,16 @@ func run() error {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
 
-	// Мерчант API /v1: аутентификация ключом и идемпотентность POST;
-	// маршруты добавляет 7.4.
-	router.Group("/v1",
+	// Мерчант API /v1: аутентификация ключом и идемпотентность POST; маршруты
+	// домена добавляет 7.4, прокси отчетов - 11.4.
+	merchantAPI := router.Group("/v1",
 		httpmw.Require(func(ctx context.Context, token string) (string, error) {
 			result, err := keys.Verify(ctx, token)
 			return result.MerchantID, err
 		}),
 		httpmw.Idempotency(idempotency),
 	)
+	transport.RegisterReports(merchantAPI, reportsClient)
 
 	httpSrv := &http.Server{
 		Addr:              httpAddr,

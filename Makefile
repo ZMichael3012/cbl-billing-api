@@ -10,10 +10,11 @@ test:
 test-integration:
 	go test -tags integration -count=1 ./internal/...
 
-# e2e поднимает compose-стенд: жизненный цикл API-ключей (7.2) и старт
-# сервиса с миграциями (7.3).
+# e2e поднимает compose-стенд: жизненный цикл API-ключей (7.2), старт
+# сервиса с миграциями (7.3) и прокси отчетов /v1/reports (11.4).
 e2e:
 	powershell -NoProfile -File test/e2e/api_keys.ps1
+	powershell -NoProfile -File test/e2e/reports.ps1
 
 vet:
 	go vet ./...

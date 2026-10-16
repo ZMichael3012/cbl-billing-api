@@ -1,4 +1,4 @@
-# E2E CBL-7.2/7.3: API-ключи и старт сервиса на compose-стенде billing-api.
+﻿# E2E CBL-7.2/7.3: API-ключи и старт сервиса на compose-стенде billing-api.
 # Запуск из каталога сервиса: powershell -NoProfile -File test/e2e/api_keys.ps1
 # Сценарий: compose up (PostgreSQL + Redis) -> linux-сборка keyctl -> issue ->
 # verify (miss, затем hit через Redis) -> rotate (прежний ключ в окне

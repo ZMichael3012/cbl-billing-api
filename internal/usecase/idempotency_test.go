@@ -294,11 +294,13 @@ func TestIdempotencyCacheMalformedFallsToPostgres(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, DecisionProceed, decision.Kind, "порча кэша деградирует в БД")
 
-	// Валидный JSON с нулевым статусом также не принимается.
-	cache.values[cacheKey] = `{"hash":"` + fmt.Sprintf("%x", fingerprint) + `","status":0,"content_type":"","body_base64":"","completed_at":"2026-10-15T12:00:00Z"}`
-	decision, err = service.Begin(ctx, "m-1", "key-0000000e", fingerprint)
+	// Валидный JSON с нулевым статусом также не принимается: проверяется на
+	// свежем ключе (предыдущий уже захвачен в обработку и вернул бы conflict).
+	zeroKey := idempotencyCachePrefix + "m-1:key-0000000f"
+	cache.values[zeroKey] = `{"hash":"` + fmt.Sprintf("%x", fingerprint) + `","status":0,"content_type":"","body_base64":"","completed_at":"2026-10-15T12:00:00Z"}`
+	decision, err = service.Begin(ctx, "m-1", "key-0000000f", fingerprint)
 	require.NoError(t, err)
-	assert.Equal(t, DecisionProceed, decision.Kind)
+	assert.Equal(t, DecisionProceed, decision.Kind, "нулевой статус кэша не обслуживается")
 }
 
 func TestIdempotencyBeginExpiredWindow(t *testing.T) {

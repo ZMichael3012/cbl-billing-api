@@ -8,7 +8,8 @@ BFF/оркестратор мерчант API /v1: принимает запро
 
 ## 1. Границы
 
-In scope: эндпоинты /v1, идемпотентность, аутентификация мерчантов (API-ключи).
+In scope: эндпоинты /v1, идемпотентность, аутентификация мерчантов (API-ключи),
+прокси отчетов `GET /v1/reports/{report_type}` в Reporting с мерчантом из токена (11.4).
 
 Out of scope: другие сервисы платформы; взаимодействие только через контракты `cbl-protos`
 (gRPC), Kafka и REST периметра (см. `CBL-000`, раздел 2).
@@ -48,6 +49,10 @@ idempotency.go` (решения begin/finish, Redis-снимок с остатк
 валидация значения кэша, TTL и брошенная обработка), `internal/transport/
 httpmw/idempotency.go` (middleware после Require: 400/409/413, реплей
 `Idempotent-Replayed`, предел тела 1 MiB, фиксация без отмены клиента).
+Отчеты (11.4): `internal/reporting/client.go` (gRPC-клиент ReportingService с
+классификацией ошибок), `internal/transport/reports.go` (GET `/v1/reports/{report_type}`
+в группе Require: параметры отчета, коды `unknown_report_type`/`validation_failed`/
+`service_unavailable`, курсор и строки проксируются без преобразований).
 
 ## 4. Команды
 
@@ -55,7 +60,7 @@ httpmw/idempotency.go` (middleware после Require: 400/409/413, реплей
 make build             # go build ./...
 make test              # go test ./...
 make test-integration  # integration (testcontainers: PostgreSQL, Redis)
-make e2e               # compose-стенд: API-ключи (7.2) и старт сервиса (7.3)
+make e2e               # compose-стенд: ключи (7.2), старт (7.3), отчеты (11.4)
 make vet               # go vet ./... (+ теги integration e2e)
 make lint              # golangci-lint в Docker (контекст services/)
 make up                # docker compose -f deploy/docker-compose.yml up -d
@@ -71,7 +76,10 @@ HTTP `8010`, gRPC `-`, метрики `9210`.
 идемпотентность работают только по PostgreSQL, WARN), `API_KEY_ROTATION_GRACE`
 (24h, минимум 1h), `API_KEY_CACHE_TTL` (5m, 1s - 1h), `API_KEY_DENY_CACHE_TTL`
 (60s, 0 выключает), `IDEMPOTENCY_TTL` (24h, 1h - 168h),
-`IDEMPOTENCY_PROCESSING_TIMEOUT` (2m, 30s - 15m); невалидные значения -
+`IDEMPOTENCY_PROCESSING_TIMEOUT` (2m, 30s - 15m), `REPORTING_GRPC_ADDR`
+(опционален, host:port: без него `/v1/reports` отвечает 503, WARN),
+`REPORTING_TIMEOUT` (5s, 1 - 10s: не больше серверного WriteTimeout); невалидные
+значения -
 отказ старта. `KAFKA_BROKERS`, `SCHEMA_REGISTRY_URL`, `GRPC_ADDR` зарезервированы.
 
 ## 6. Правила разработки
@@ -107,6 +115,7 @@ SLO уточняется в задаче 14.4. Базовые метрики: la
 | T-BA-08 | Попытки идемпотентности фехтуются id: `Begin` возвращает `AttemptID`, `Finish` завершает/освобождает только свою попытку; брошенная и истекшая запись переиспользуется (delete+insert) | устаревший завершившийся запрос не может подменить или удалить строку нового исполнения; конфликт delete+insert разрешается повторным решением (глубина 2) | лишний репозиторный id в решении; переобработка после `ProcessingTimeout` может дать повторный side effect, если downstream не идемпотентен | производные ключи downstream обязательны (FR-5 спеки 7.3); тесты fencing unit/integration |
 | T-BA-09 | Конкурентный повтор отвечает `409 idempotency_in_progress` без ожидания; `ProcessingTimeout` (2m) больше максимального дедлайна шага обработки | простота: нет серверных ожиданий и блокировок | мерчант обязан повторять после 409 (KI-billing-api-07); долгий обработчик (>2m) может быть перезапущен конкурентно, спасает fencing + downstream-ключи | FR-5/§7 спеки 7.3; KI-billing-api-07; дедлайны 7.4 - секунды |
 | T-BA-10 | Пределы: тело запроса 1 MiB (`http.MaxBytesReader`, 413), снимок ответа 256 KiB (overflow освобождает ключ), TTL 1h-168h с остатком окна в кэше, фиксация без отмены клиента (5 с) | защита памяти и от продления окна; дисконнект не теряет снимок | ответ больше 256 KiB повторится заново; fail-closed 503 при недоступности журнала (обработчик не исполняется) | тесты предела/overflow/остатка окна; коды аддитивны (`payload_too_large`, `idempotency_in_progress`, `missing_idempotency_key`) - в 7.4/15.4 |
+| T-BA-11 | Прокси отчетов: `merchant_id` только из токена (query-параметр не принимается), параметры валидируются на BFF (период RFC 3339, лимит 1 - 100, длины `group_by`/курсора), ошибки Reporting транслируются в problem+json (404 `unknown_report_type`, 400 `validation_failed`, 503 `service_unavailable`) | единая точка аутентификации и контрактных кодов; Reporting не публикуется мерчантам напрямую; прокси не преобразует строки и курсор | прокси зависит от доступности Reporting (503 - деградация, остальной BFF жив); plaintext gRPC до Reporting (KI-billing-api-09) | `REPORTING_GRPC_ADDR` опционален (пусто - 503, WARN); таймаут `REPORTING_TIMEOUT` 5 с (дедлайн контракта); тесты transport/unit и e2e со stub; mTLS - 0.6 |
 
 ## 9. Known issues
 
@@ -120,13 +129,15 @@ SLO уточняется в задаче 14.4. Базовые метрики: la
 | KI-billing-api-06 | Рост `idempotency_keys`: строка на каждый POST с ключом, снимки до 256 KiB в PG и Redis; очистка только проверкой TTL при обращении | рост БД/Redis и бэкапов; при 3000 RPS потолок сотни млн строк/сутки | партиционирование и фоновая очистка по `idempotency_created_idx` - 14.2; до этого мониторинг размера (runbook) | open |
 | KI-billing-api-07 | Конкурентный повтор отвечает `409 idempotency_in_progress` без серверного ожидания: клиент обязан повторить сам | флоу клиента сложнее при редких гонках | ожидание in-flight (wait/retry-after) - при требовании 7.4; метрика кода - 0.7 | open |
 | KI-billing-api-08 | Повторный обработчик после `ProcessingTimeout`/сбоя `Complete`: если downstream-вызовы 7.4 не используют производные ключи идемпотентности, возможен повторный side effect | двойное создание сущностей в доменных сервисах при редких сбоях журнала | FR-5 спеки 7.3 (производные ключи `{merchant}:{key}:{шаг}`) - обязательна в 7.4; fencing защищает строку журнала, но не downstream | open |
+| KI-billing-api-09 | Канал до Reporting - plaintext gRPC без authN/mTLS (клиент не запрашивает TLS) | подмена адреса Reporting в сети стенда подменяет отчеты мерчантам (чтение, не запись); prod запрещен до 0.6 | mTLS/авторизация межсервисных вызовов - 0.6; порт Reporting не публиковать вне доверенной зоны; отчеты - не денежные решения (T-09) | open |
 
 ## 10. Журнал задач
 
 | CBL | Дата | Статус | Спека | Коммит |
 | :-- | :-- | :-- | :-- | :-- |
 | CBL-7.2 | 2026-10-15 | done, ревью закрыто (API-ключи: формат и sha256, выдача/ротация/отзыв, bearer-middleware, Redis-кэш проверки с tombstone, keyctl, e2e compose; покрытие 84.0%) | `.specs/CBL-7.2-api-keys.md` | 9390158 |
-| CBL-7.3 | 2026-10-15 | done, ревью закрыто (идемпотентность: журнал с fencing попыток, Redis-снимок с остатком окна, middleware после Require, предел тела 1 MiB, 413/409-коды; покрытие 85.0%) | `.specs/CBL-7.3-idempotency.md` | этот коммит |
+| CBL-7.3 | 2026-10-15 | done, ревью закрыто (идемпотентность: журнал с fencing попыток, Redis-снимок с остатком окна, middleware после Require, предел тела 1 MiB, 413/409-коды; покрытие 85.0%) | `.specs/CBL-7.3-idempotency.md` | 2fbb6b5 |
+| CBL-11.4 | 2026-10-16 | done (прокси `/v1/reports/{report_type}`: merchant из токена, параметры и problem+json коды, курсор прозрачен; интеграционные тесты со stub Reporting и e2e reports.ps1; покрытие 86.3%; попутно исправлен красный с 7.3 тест `TestIdempotencyCacheMalformedFallsToPostgres` (переиспользование захваченного ключа) | `.specs/CBL-11.4-reports-proxy.md` + `.specs/CBL-11.4-reports-query.md` (cbl-reporting) | этот коммит |
 
 ## 11. Runbook
 
@@ -181,3 +192,16 @@ API-ключи (7.2):
    `Retry-After` - не выполнять обработчик в обход журнала.
 8. Двойной side effect при сбое фиксации (KI-billing-api-08): сверить
    производные ключи downstream-вызовов 7.4; ручные исправления - сторно (10.x).
+
+Отчеты (11.4):
+
+1. `404 unknown_report_type`: тип вне каталога Reporting (`payments`, `payouts`,
+   `ledger_entries`, `turnover`); список - в спеке 11.4 cbl-reporting.
+2. `400 validation_failed`: невалидный период (RFC 3339, `period_to >= period_from`),
+   лимит вне 1 - 100, длина `group_by`/курсора; деталь в `detail`.
+3. `503 service_unavailable` с `Retry-After: 1`: Reporting недоступен или пуст
+   `REPORTING_GRPC_ADDR` (WARN при старте); остальной мерчант API работает -
+   не считать деградацией BFF.
+4. Пагинация: `next_cursor` передавать как есть; курсор Reporting-специфичен
+   (чужой вернет 400). Мерчант не может запросить чужие данные: `merchant_id`
+   всегда из токена, query-параметр игнорируется.

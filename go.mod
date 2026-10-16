@@ -4,6 +4,7 @@ go 1.26.0
 
 require (
 	github.com/cbl/cbl-kit v0.0.0-00010101000000-000000000000
+	github.com/cbl/cbl-protos v0.0.0-00010101000000-000000000000
 	github.com/gin-gonic/gin v1.10.0
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.11.0
@@ -12,6 +13,8 @@ require (
 	github.com/testcontainers/testcontainers-go v0.34.0
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.34.0
 	go.uber.org/zap v1.28.0
+	google.golang.org/grpc v1.84.0
+	google.golang.org/protobuf v1.36.12
 	gorm.io/driver/postgres v1.5.11
 	gorm.io/gorm v1.25.12
 )
@@ -97,9 +100,9 @@ require (
 	golang.org/x/sys v0.49.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260706201446-f0a921348800 // indirect
-	google.golang.org/grpc v1.84.0 // indirect
-	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
 replace github.com/cbl/cbl-kit => ../cbl-kit
+
+replace github.com/cbl/cbl-protos => ../cbl-protos
