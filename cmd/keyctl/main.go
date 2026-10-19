@@ -14,6 +14,8 @@ import (
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 
+	"github.com/google/uuid"
+
 	"github.com/cbl/cbl-kit/storagex"
 
 	"github.com/cbl/cbl-billing-api/internal/storage"
@@ -90,7 +92,11 @@ func run(command string, args []string) error {
 
 	switch command {
 	case "issue":
-		key, token, err := keys.Issue(ctx, *merchant)
+		canonical, err := canonicalMerchantUUID(*merchant)
+		if err != nil {
+			return err
+		}
+		key, token, err := keys.Issue(ctx, canonical)
 		if err != nil {
 			return err
 		}
@@ -99,7 +105,11 @@ func run(command string, args []string) error {
 		fmt.Println("token показывается один раз; сохраните его в секрете")
 		return nil
 	case "rotate":
-		key, token, err := keys.Rotate(ctx, *merchant)
+		canonical, err := canonicalMerchantUUID(*merchant)
+		if err != nil {
+			return err
+		}
+		key, token, err := keys.Rotate(ctx, canonical)
 		if err != nil {
 			return err
 		}
@@ -157,6 +167,17 @@ func run(command string, args []string) error {
 // printKey prints the key record without the secret.
 func printKey(id, prefix, merchantID, status string) {
 	fmt.Printf("id=%s prefix=%s merchant_id=%s status=%s\n", id, prefix, merchantID, status)
+}
+
+// canonicalMerchantUUID guards and canonicalizes the merchant identity (D2 of
+// the 7.4 spec): new keys carry a lowercase canonical UUIDv7 so the BFF can
+// pass the subject to Payment unchanged.
+func canonicalMerchantUUID(value string) (string, error) {
+	parsed, err := uuid.Parse(value)
+	if err != nil || parsed.Version() != 7 {
+		return "", fmt.Errorf("merchant must be a UUIDv7 platform merchant id")
+	}
+	return parsed.String(), nil
 }
 
 // envOr returns the environment variable or the fallback value.

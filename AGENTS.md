@@ -10,7 +10,9 @@ The em dash (U+2014) is forbidden; only the hyphen is used.
 ## 1. Boundaries
 
 In scope: /v1 endpoints, idempotency, merchant authentication (API keys), proxy of reports
-`GET /v1/reports/{report_type}` to Reporting with the merchant taken from the token (11.4).
+`GET /v1/reports/{report_type}` to Reporting with the merchant taken from the token (11.4),
+merchant invoices (`POST /v1/invoices`, `GET /v1/invoices`, `GET /v1/invoices/{id}`),
+balances and the ledger statement (7.4/7.6) with the checkout contract (`checkout_url`).
 
 Out of scope: other platform services; interaction only via `cbl-protos` contracts (gRPC),
 Kafka and the perimeter REST (see `CBL-000`, section 2).
@@ -23,9 +25,10 @@ Kafka and the perimeter REST (see `CBL-000`, section 2).
   (contracts cf-3.2/cf-3.3/cf-3.4 and CF-1), Notification 8.x - later
 - Kafka produces: none
 - Kafka consumes: none
-- Storage: PostgreSQL billing (`api_keys`, `idempotency_keys`, later the invoice projection
-  7.3/7.4), Redis (key verification cache `apikey:v1:{hex sha256}` - also read by the
-  perimeter 7.5; idempotency snapshots `idem:v1:{merchant}:{key}`)
+- Storage: PostgreSQL billing (`api_keys`, `idempotency_keys`, `invoices` - the 7.4 invoice
+  projection owned by the BFF: merchant_order_id, metadata), Redis (key verification cache
+  `apikey:v1:{hex sha256}` - also read by the perimeter 7.5; idempotency snapshots
+  `idem:v1:{merchant}:{key}`)
 
 Contracts are frozen in `cbl-protos` (CF-1 gRPC, CF-2/CF-3 events, cf-3.1 merchant OpenAPI),
 see `CBL-004`.
@@ -52,6 +55,20 @@ Reports (11.4): `internal/reporting/client.go` (gRPC client of ReportingService 
 classification), `internal/transport/reports.go` (GET `/v1/reports/{report_type}` in the
 Require group: report parameters, codes `unknown_report_type`/`validation_failed`/
 `service_unavailable`, the cursor and rows are proxied without transformation).
+Invoices, balances and the statement (7.4/7.6): `internal/domain/invoice.go` (payment
+state words, the projection record, the derived key `{merchant}:{key}:create_payment`
+of 7.3 FR-5, the opaque BFF cursor and the fiat decimals catalog),
+`internal/storage/invoices.go` (the `invoices` projection with the owner split
+`ErrNotFound`/`ErrForeign`), `internal/payment/client.go` and `internal/ledger/client.go`
+and `internal/connector/client.go` (gRPC clients with the sentinel classification),
+`internal/usecase/invoices.go` (create/get/list; the list hydrates the payment page with
+the projections or pages by order reference with the BFF cursor) and
+`internal/usecase/statements.go` (balances = merchant accounts plus the pending
+aggregation over detected/confirming with a page cap; entries pass through with the
+merchant reference), `internal/transport/{invoices,statements}.go` (the contract DTOs,
+the create pre-check against `GetCapabilities` incl. the min/max bounds, problem codes),
+`migrations/00003_invoices.sql`. The token subject is the canonical UUID merchant id
+(keyctl validates it, D2); the clients are optional at startup (503 degradation).
 
 ## 4. Commands
 
@@ -82,7 +99,10 @@ idempotency work through PostgreSQL only, WARN), `API_KEY_ROTATION_GRACE`
 (60s, 0 disables), `IDEMPOTENCY_TTL` (24h, 1h - 168h),
 `IDEMPOTENCY_PROCESSING_TIMEOUT` (2m, 30s - 15m), `REPORTING_GRPC_ADDR`
 (optional, host:port: without it `/v1/reports` responds 503, WARN),
-`REPORTING_TIMEOUT` (5s, 1 - 10s: not greater than the server WriteTimeout); invalid
+`REPORTING_TIMEOUT` (5s, 1 - 10s: not greater than the server WriteTimeout),
+`PAYMENT_GRPC_ADDR`, `LEDGER_GRPC_ADDR`, `CONNECTOR_GRPC_ADDR` (optional, host:port:
+without one the affected 7.4 routes respond 503, WARN) and the matching
+`PAYMENT_TIMEOUT`/`LEDGER_TIMEOUT`/`CONNECTOR_TIMEOUT` (5s, 1 - 10s); invalid
 values - startup failure. `KAFKA_BROKERS`, `SCHEMA_REGISTRY_URL`, `GRPC_ADDR` are reserved.
 
 ## 6. Development rules
@@ -127,6 +147,11 @@ cache hit-rate; dashboards after task 0.7.
 | T-BA-09 | A concurrent repeat responds `409 idempotency_in_progress` without waiting; `ProcessingTimeout` (2m) is greater than the maximum processing step deadline | simplicity: no server-side waits or locks | the merchant must retry after 409 (KI-billing-api-07); a long handler (>2m) may be restarted concurrently, fencing + downstream keys save it | FR-5/§7 of the 7.3 spec; KI-billing-api-07; the 7.4 deadlines are seconds |
 | T-BA-10 | Limits: request body 1 MiB (`http.MaxBytesReader`, 413), response snapshot 256 KiB (overflow releases the key), TTL 1h-168h with the remaining window in the cache, commit without client cancellation (5 s) | memory protection and protection from window extension; a disconnect does not lose the snapshot | a response larger than 256 KiB is repeated from scratch; fail-closed 503 when the journal is unavailable (the handler is not executed) | limit/overflow/remaining-window tests; the codes are additive (`payload_too_large`, `idempotency_in_progress`, `missing_idempotency_key`) - in 7.4/15.4 |
 | T-BA-11 | Report proxy: `merchant_id` only from the token (the query parameter is not accepted), parameters are validated on the BFF (RFC 3339 period, limit 1 - 100, `group_by`/cursor lengths), Reporting errors are translated into problem+json (404 `unknown_report_type`, 400 `validation_failed`, 503 `service_unavailable`) | a single point of authentication and contract codes; Reporting is not exposed to merchants directly; the proxy does not transform rows or the cursor | the proxy depends on Reporting availability (503 - degradation, the rest of the BFF is alive); plaintext gRPC to Reporting (KI-billing-api-09) | `REPORTING_GRPC_ADDR` is optional (empty - 503, WARN); `REPORTING_TIMEOUT` timeout 5 s (the contract deadline); transport/unit tests and e2e with a stub; mTLS - 0.6 |
+| T-BA-12 | The 7.4 invoice projection lives in the BFF database (`invoices`): the payment service stores no `merchant_order_id`/`metadata`, and the projection also carries the order-id filter and the replay context | the merchant-facing fields stay in the merchant-facing service; no contract or storage change in a frozen domain service; one read merges the live payment with the projection | the projection can drift from Payment (the crash window is served read-through with a WARN; a repair job is not built) | the insert is idempotent (ON CONFLICT DO NOTHING); the merged read is covered by unit/integration tests and the M1 run; the drift metric is a candidate for 0.7 |
+| T-BA-13 | The token subject is the canonical UUID merchant id: `keyctl issue/rotate` requires a UUIDv7 and stores its canonical lowercase form (D2), and the BFF validates the subject shape (403 `invalid_merchant` otherwise) | one identity serves Payment (`merchant_id` UUID) and Ledger (`merchant_ref` string); no second mapping space | keys issued before the rule cannot use the 7.4 routes (403 + WARN): reissue (the 7.2 e2e and the runbook use UUID merchants since 17.14) | the runbook and E2E.md document the UUID merchant; the 7.2 scenario runs with a UUIDv7 merchant |
+| T-BA-14 | The invoice list pages by the Payment cursor without an order-id filter and by a BFF cursor (`cursor_v1_` + base64url of `(created_at, payment_id)`) with the order-id filter; both cursors are opaque to the client | the common path stays a single Payment page; the order-id path is bounded by the page size and pages in memory with the status/period filters applied per row | the order-id page can be shorter than the limit (rows filtered in memory) and a projection without a payment is skipped with a WARN | cursor codec tests, the pagination walk integration test and the M1 list check |
+| T-BA-15 | `GET /v1/balances` `pending` is a Payment aggregation (detected + confirming, received-else-expected per row, 20 pages x 200 cap with a WARN and a counter); `available`/`reserved` come from the `merchant` accounts only (payout accounts hold funds in flight) | the contract's pending field has one documented source; the cap bounds the scan on a hot read | the aggregation is approximate above the cap; summing `received` before confirmation is a snapshot, not a guarantee | the cap counter metric (candidate 0.7), the aggregation matrix tests, the contract comment in the OpenAPI |
+| T-BA-16 | The Payment/Ledger/Connector clients are optional at startup (empty address - the affected routes answer 503 with `Retry-After: 1`, WARN); the create pre-check uses `GetCapabilities` (decimals, min/max bounds) and maps provider sub-codes by gRPC class only | the service boots and the 7.2/7.3/11.4 scenarios keep working without the domain services; the pre-check returns a clean 422 before Payment | an unset address silently degrades the new routes; the finer Payment codes (`quote_rejected` etc.) collapse into the status message because the kit error mapper drops `Error.Code` (KI-billing-api-11) | startup WARNs name the unset variables; the degradation scenario in E2E.md; the code propagation is a kit follow-up |
 
 ## 9. Known issues
 
@@ -136,12 +161,13 @@ cache hit-rate; dashboards after task 0.7.
 | KI-billing-api-02 | The Redis verification cache is an authorization anchor: a write of `apikey:v1:<sha256>` = `ok:<merchant>` grants impersonation in the BFF and on the perimeter; local Redis has no password/TLS, a write is available to any service on the network; since 7.3 the `idem:v1:*` space additionally holds response bodies (a read = a leak, including the `signing_secret` of a repeated registration) | the dev stand and any network with access to Redis allow bypassing authentication and reading/forging idempotency snapshots; prod is forbidden until ACL | AUTH/TLS, per-service ACL and namespaces (0.6); do not publish Redis ports outside the trusted zone; a forged snapshot degrades to PostgreSQL (7.3); prod deployment is forbidden | open |
 | KI-billing-api-03 | `keyctl` without RBAC and actor audit: anyone with PG_DSN and DDL rights issues/revokes keys; the action log is limited to the prefix log; `api_keys` rows have no DELETE protection from the DB owner (the trigger is dropped by the owner) | the revocation trail is managed only by process; there is no one responsible for issuance | UI/RBAC/key audit - 12.1; separate migrator/runtime roles (0.4/0.6) | open |
 | KI-billing-api-04 | The 403 "merchant suspended" from the contract has no source: there is no merchant status lifecycle, the middleware responds only 401/503 | merchant access cannot be revoked as a whole except by revoking all keys | merchant status and RBAC - 12.1; the suspend contour - when requirements appear | open |
-| KI-billing-api-05 | There is no k6 load profile (`test/load/` is empty): the hot HTTP path of /v1 does not exist yet | checklist step 8 is closed partially | the profile - 7.4/14.1 (a mix of reads/mutations) | open |
+| KI-billing-api-05 | The full k6 load profile is not built: the 17.14 smoke (`test/load/invoices-smoke.js`) covers a mixed read/mutation run with a low create share (the provider manifest budget, BTCPay 100 invoices/hour) | checklist step 8 is closed partially: the smoke is green, the 3000 RPS profile and the thresholds are not | the full profile - 14.1 (a mix of reads/mutations at the target rate) | open |
 | KI-billing-api-06 | `idempotency_keys` growth: a row for every POST with a key, snapshots up to 256 KiB in PG and Redis; cleanup only via a TTL check on access | growth of the DB/Redis and backups; at 3000 RPS the ceiling is hundreds of millions of rows/day | partitioning and background cleanup by `idempotency_created_idx` - 14.2; until then size monitoring (runbook) | open |
 | KI-billing-api-07 | A concurrent repeat responds `409 idempotency_in_progress` without a server-side wait: the client must retry itself | the client flow is more complex on rare races | in-flight waiting (wait/retry-after) - when required by 7.4; the code metric - 0.7 | open |
 | KI-billing-api-08 | A repeated handler after `ProcessingTimeout`/a `Complete` failure: if the 7.4 downstream calls do not use derived idempotency keys, a repeated side effect is possible | double creation of entities in domain services on rare journal failures | FR-5 of the 7.3 spec (derived keys `{merchant}:{key}:{step}`) - mandatory in 7.4; fencing protects the journal row, but not downstream | open |
 | KI-billing-api-09 | The channel to Reporting is plaintext gRPC without authN/mTLS (the client does not request TLS) | spoofing the Reporting address on the stand network substitutes reports served to merchants (reads, not writes); prod is forbidden until 0.6 | mTLS/authorization of inter-service calls - 0.6; do not publish the Reporting port outside the trusted zone; reports are not money decisions (T-09) | open |
-| KI-billing-api-10 | The hosted-provider invoice paths of 17.14 (CoinGate checkout_url/`payment_url`, BitPay and NOWPayments hosted flows) and the M1 acceptance cannot be verified until the 17.0 sandbox accounts and credentials exist; local verification is limited to BTCPay regtest (`deploy` dev stand) and the mock-gateway profiles; without an account the CoinGate adapter config and the routing/capability rows stay unexercised against the real API. Status 19.10.2026: the CoinGate sandbox account and token exist; the stand egress is Cloudflare-blocked, but through the local NL proxy (stable exit 72.56.22.194, allowlisted in the API app) the token validates (`200 OK`) and the smoke create/read/list calls pass (orders 476614/476615), so the CoinGate part of the account-gated run can proceed locally once the connector wire gaps found by the smoke are fixed (`cbl-connector` KI-connector-14: `payment_url` not mapped to `checkout_url`, no callback token/callback URL sent, pre-deposit statuses mapped to detected, the export window params ignored by the real API); stage/prod still need the own static egress (the 17.0 letter question stands) | the 17.14 work is provable locally on BTCPay/mock only; the CoinGate hosted path additionally needs the KI-connector-14 fixes before a real end-to-end run; the CoinGate token must be rotated (it was shared in the working chat) and stored in Vault (`secret/cbl/stage/coingate/api_token`) | the account-gated acceptance is the dedicated trigger-based task 17.26 (`CBL-004`, E17); for CoinGate it additionally requires an allowed egress (the NL proxy for local runs; static egress/VPN/stage or a support fix for stage); the provider letters in the 17.0 groundwork gain the blocked-IP question; the wire shapes stay provisional until then (connector KI-connector-10/12/13) | open |
+| KI-billing-api-10 | The hosted-provider invoice paths of 17.14 (CoinGate checkout_url/`payment_url`, BitPay and NOWPayments hosted flows) and the M1 acceptance cannot be verified until the 17.0 sandbox accounts and credentials exist; local verification is limited to BTCPay regtest (`deploy` dev stand) and the mock-gateway profiles; without an account the CoinGate adapter config and the routing/capability rows stay unexercised against the real API. Status 19.10.2026: the CoinGate sandbox account and token exist; the stand egress is Cloudflare-blocked, but through the local NL proxy (stable exit 72.56.22.194, allowlisted in the API app) the token validates (`200 OK`) and the smoke create/read/list calls pass (orders 476614/476615), so the CoinGate part of the account-gated run can proceed locally once the connector wire gaps found by the smoke are fixed (`cbl-connector` KI-connector-14: `payment_url` not mapped to `checkout_url`, no callback token/callback URL sent, pre-deposit statuses mapped to detected, the export window params ignored by the real API); stage/prod still need the own static egress (the 17.0 letter question stands) | the 17.14 work is provable locally on BTCPay/mock only; the CoinGate hosted path additionally needs the KI-connector-14 fixes before a real end-to-end run; the CoinGate token must be rotated (it was shared in the working chat) and stored in Vault (`secret/cbl/stage/coingate/api_token`) | the account-gated acceptance is the dedicated trigger-based task 17.26 (`CBL-004`, E17); for CoinGate it additionally requires an allowed egress (the NL proxy for local runs; static egress/VPN/stage or a support fix for stage); the provider letters in the 17.0 groundwork gain the blocked-IP question; the wire shapes stay provisional until then (connector KI-connector-10/12/13) | CLOSED 19.10.2026: the M1 acceptance PASSED on the global stand with the mock-gateway btcpay profile (`test/e2e/.runs/20261019t092258z`, the connector CoinGate sandbox chain passed in 17.26 increment B); the account-gated CoinGate acceptance on the real hosted page remains with 17.26 (the CoinGate sandbox run already passed through the connector) |
+| KI-billing-api-11 | The kit error mapper (`grpcmw.MapError`) drops `Error.Code`: a client sees the gRPC class and the message text only, so the BFF cannot map the Payment creation sub-codes (`quote_rejected`, `invoice_rejected`, `pay_amount_invalid`) to distinct contract codes - all `FailedPrecondition` answers collapse into 422 `validation_failed` with the server message in `detail`; `InvalidArgument` maps to 400 `validation_failed` and the message stays server-side (the BFF no longer reflects dependency texts) | a provider-side rejection (`invoice_rejected`) surfaces as 422 instead of 503 `provider_unavailable`; the merchant cannot branch on the exact reason | propagate the code (an additive status detail or a message prefix in `grpcmw`) in a kit task; until then the BFF maps by class (T-BA-16) and keeps the message in the log | open |
 
 ## 10. Task journal
 
@@ -151,6 +177,7 @@ cache hit-rate; dashboards after task 0.7.
 | CBL-7.3 | 2026-10-15 | done, review closed (idempotency: journal with attempt fencing, Redis snapshot with the remaining window, middleware after Require, body limit 1 MiB, 413/409 codes; coverage 85.0%) | `.specs/CBL-7.3-idempotency.md` | 2fbb6b5 |
 | CBL-11.4 | 2026-10-16 | done (proxy `/v1/reports/{report_type}`: merchant from the token, parameters and problem+json codes, cursor transparent; integration tests with a Reporting stub and the e2e reports scenario (with CBL-16.3 - E2E.md); coverage 86.3%; incidentally fixed the red 7.3 test `TestIdempotencyCacheMalformedFallsToPostgres` (reuse of a captured key) | `.specs/CBL-11.4-reports-proxy.md` + `.specs/CBL-11.4-reports-query.md` (cbl-reporting) | 213f909 |
 | CBL-16.3 | 2026-10-16 | done (English comments and documentation across the repository: code, tests, configs, specs (7.2, 7.3, 11.4 translated), AGENTS.md, README; e2e runs via `test/e2e/E2E.md` with the stub in `.additionals/` and artifacts in `.runs/`; validation run PASS; coverage unchanged 86.3%) | `.specs/CBL-16.3-conventions.md` | this commit |
+| CBL-17.14 | 2026-10-19 | done (merchant invoices, balances, ledger entries and the checkout contract (7.4/7.6, M1): `POST /v1/invoices` with the capability pre-check (decimals, the min/max envelope, D7) and the derived key `{merchant}:{key}:create_payment` with the `invoice_intents` expiry anchor (D8), `GET /v1/invoices/{id}` and `GET /v1/invoices` (the Payment cursor or the order-id branch with the BFF cursor), `GET /v1/balances` (merchant accounts plus the capped pending aggregation) and `GET /v1/ledger/entries` (ownership through the merchant reference); the BFF-owned `invoices` projection (migration 00003: the merchant context, the requested amount, the intents) with the owner split; the payment/ledger/connector gRPC clients with the sentinel classification (`InvalidArgument` -> 400, the rest by class, KI-billing-api-11); keyctl requires and canonicalizes a UUIDv7 merchant (D2); the clients are optional (503 degradation) with a 10 s request budget; the review closure fixed the cross-tenant merge checks, the list determinism, the fixed dependency details, the money guards and the missing integration rows (I-03..I-07); unit+integration coverage 88.0% (no regression), lint 0; the M1 acceptance PASSED on the global stand (run `20261019t092258z`: create -> quote -> hosted checkout -> replay -> mock simulate -> signed webhook -> canonical -> payment completed -> ledger posting -> balances/entries/list) and the degradation scenario PASSED (`20261019t104808z`); the k6 smoke passed (100% checks, create p95 82 ms); the run found and fixed the mock btcpay `amountPaid` gap and the connector Settled confirmation depth) | `.specs/CBL-17.14-invoices-balances-entries.md` | this commit |
 
 ## 11. Runbook
 
@@ -219,3 +246,29 @@ Reports (11.4):
 4. Pagination: pass `next_cursor` as is; the cursor is Reporting-specific
    (a foreign one returns 400). A merchant cannot request someone else's data: `merchant_id`
    always comes from the token, the query parameter is ignored.
+
+Invoices, balances and the statement (7.4):
+
+1. `503 service_unavailable` with `Retry-After: 1` on the new routes means an unset or
+   unavailable `PAYMENT_GRPC_ADDR`/`LEDGER_GRPC_ADDR`/`CONNECTOR_GRPC_ADDR` (the startup
+   WARNs name the variable) or a dependency failure; the raw error is in the log with the
+   request id (the response detail is fixed).
+2. `403 invalid_merchant`: the API key subject is not a canonical lowercase UUIDv7 (a key
+   issued before D2); reissue with `keyctl issue --merchant <uuidv7>` (the CLI canonicalizes
+   and enforces v7).
+3. `422 asset_network_unsupported` / `currency_unsupported` / `amount_out_of_bounds`: the
+   create pre-check against `GetCapabilities` rejected the request (the envelope rule: at
+   least one capability row must accept the amount); check the connector provider rows.
+4. The invoice projection can drift from Payment: `SELECT payment_id, merchant_id,
+   merchant_order_id FROM invoices WHERE ...`; a missing row is served read-through with a
+   WARN (the crash window), a foreign row answers 404. A repair job is not built.
+5. `GET /v1/balances` `pending` is an approximation: the scan is capped (20 pages x 200 per
+   state) and the cap is logged; a double count is possible when a payment moves between
+   detected and confirming during the two scans.
+6. Derived keys: a create retry must send the same `expires_at`; the `invoice_intents`
+   table pins the anchor per (merchant, Idempotency-Key). Rows are transient (a retention
+   job is a 14.2 candidate) - do not delete an intent while its key is inside the
+   idempotency window.
+7. A projection insert collision (`RowsAffected` 0) with a row of another merchant answers
+   a conflict: investigate as a Payment id spoofing signal (KI-billing-api-09/11,
+   KI-payment-04).

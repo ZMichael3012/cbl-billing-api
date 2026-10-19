@@ -19,8 +19,17 @@ make down
 ```
 
 E2E: the run is performed by an agent following `test/e2e/E2E.md` (the API keys, startup,
-reports scenarios); artifacts go to `test/e2e/.runs/<UTC mark>/`, auxiliary files to
-`test/e2e/.additionals/`.
+reports, M1 and degradation scenarios); artifacts go to `test/e2e/.runs/<UTC mark>/`,
+auxiliary files to `test/e2e/.additionals/`.
+
+## Invoices, balances, statement /v1 (7.4/7.6)
+
+`POST /v1/invoices` (the capability pre-check, the derived downstream idempotency key,
+the invoice projection), `GET /v1/invoices/{id}`, `GET /v1/invoices` (the Payment cursor
+or the order-id branch), `GET /v1/balances` (merchant accounts plus the capped pending
+aggregation) and `GET /v1/ledger/entries` (ownership through the merchant reference);
+`checkout_url` carries the hosted payment page (7.6). The token subject is the canonical
+UUIDv7 merchant id. `test/load/invoices-smoke.js` is the k6 smoke of the hot path.
 
 ## Reports /v1/reports (11.4)
 

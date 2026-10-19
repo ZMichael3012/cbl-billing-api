@@ -20,6 +20,9 @@ import (
 	"github.com/cbl/cbl-kit/ginmw"
 	"github.com/cbl/cbl-kit/storagex"
 
+	"github.com/cbl/cbl-billing-api/internal/connector"
+	"github.com/cbl/cbl-billing-api/internal/ledger"
+	"github.com/cbl/cbl-billing-api/internal/payment"
 	"github.com/cbl/cbl-billing-api/internal/reporting"
 	"github.com/cbl/cbl-billing-api/internal/storage"
 	"github.com/cbl/cbl-billing-api/internal/transport"
@@ -35,6 +38,7 @@ const (
 	defaultIdempotencyTTL   = 24 * time.Hour
 	defaultProcessingExpiry = 2 * time.Minute
 	defaultReportingTimeout = 5 * time.Second
+	defaultDomainTimeout    = 5 * time.Second
 )
 
 // main starts the service and exits the process with a non-zero code on an
@@ -189,8 +193,8 @@ func run() error {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
 
-	// Merchant API /v1: key authentication and POST idempotency; domain routes
-	// are added by 7.4, the reports proxy by 11.4.
+	// Merchant API /v1: key authentication and POST idempotency; the domain
+	// routes of 7.4 depend on Payment, Ledger and the Connector capabilities.
 	merchantAPI := router.Group("/v1",
 		httpmw.Require(func(ctx context.Context, token string) (string, error) {
 			result, err := keys.Verify(ctx, token)
@@ -198,6 +202,79 @@ func run() error {
 		}),
 		httpmw.Idempotency(idempotency),
 	)
+
+	// The domain clients are optional at startup: without an address the
+	// affected routes answer 503 service_unavailable while the rest of the
+	// merchant API keeps working (T-BA-12, FR-7).
+	var paymentsClient usecase.PaymentClient
+	paymentTimeout, err := domainTimeout("PAYMENT_TIMEOUT")
+	if err != nil {
+		return err
+	}
+	if addr := os.Getenv("PAYMENT_GRPC_ADDR"); addr != "" {
+		client, err := payment.NewClient(addr, paymentTimeout)
+		if err != nil {
+			return fmt.Errorf("payment client: %w", err)
+		}
+		defer func() { _ = client.Close() }()
+		paymentsClient = client
+		log.Info("payment client configured", zap.String("addr", addr), zap.Duration("timeout", paymentTimeout))
+	} else {
+		log.Warn("PAYMENT_GRPC_ADDR is empty: invoice routes respond 503")
+	}
+
+	var ledgerClient usecase.LedgerClient
+	ledgerTimeout, err := domainTimeout("LEDGER_TIMEOUT")
+	if err != nil {
+		return err
+	}
+	if addr := os.Getenv("LEDGER_GRPC_ADDR"); addr != "" {
+		client, err := ledger.NewClient(addr, ledgerTimeout)
+		if err != nil {
+			return fmt.Errorf("ledger client: %w", err)
+		}
+		defer func() { _ = client.Close() }()
+		ledgerClient = client
+		log.Info("ledger client configured", zap.String("addr", addr), zap.Duration("timeout", ledgerTimeout))
+	} else {
+		log.Warn("LEDGER_GRPC_ADDR is empty: balances and statement routes respond 503")
+	}
+
+	var capabilitiesClient transport.CapabilitiesClient
+	connectorTimeout, err := domainTimeout("CONNECTOR_TIMEOUT")
+	if err != nil {
+		return err
+	}
+	if addr := os.Getenv("CONNECTOR_GRPC_ADDR"); addr != "" {
+		client, err := connector.NewClient(addr, connectorTimeout)
+		if err != nil {
+			return fmt.Errorf("connector client: %w", err)
+		}
+		defer func() { _ = client.Close() }()
+		capabilitiesClient = client
+		log.Info("connector capabilities configured", zap.String("addr", addr), zap.Duration("timeout", connectorTimeout))
+	} else {
+		log.Warn("CONNECTOR_GRPC_ADDR is empty: invoice creation responds 503")
+	}
+
+	var invoiceService *usecase.InvoiceService
+	if paymentsClient != nil {
+		invoiceService = usecase.NewInvoiceService(paymentsClient, repo, log)
+	}
+	var statementService *usecase.StatementService
+	if ledgerClient != nil {
+		statementService = usecase.NewStatementService(ledgerClient, paymentsClient, log, nil)
+	}
+
+	transport.RegisterInvoices(merchantAPI, transport.InvoicesDeps{
+		Invoices:     invoiceService,
+		Capabilities: capabilitiesClient,
+		Log:          log,
+	})
+	transport.RegisterStatements(merchantAPI, transport.StatementDeps{
+		Statements: statementService,
+		Log:        log,
+	})
 	transport.RegisterReports(merchantAPI, reportsClient)
 
 	httpSrv := &http.Server{
@@ -283,4 +360,17 @@ func intEnv(name string, fallback int) int {
 		return fallback
 	}
 	return parsed
+}
+
+// domainTimeout reads and validates a domain client timeout: the default is
+// 5 s, the bounds are 1 s to 10 s (below the server WriteTimeout).
+func domainTimeout(name string) (time.Duration, error) {
+	timeout, err := durationEnv(name, defaultDomainTimeout)
+	if err != nil {
+		return 0, err
+	}
+	if timeout < time.Second || timeout > 10*time.Second {
+		return 0, fmt.Errorf("%s is out of range: %s", name, timeout)
+	}
+	return timeout, nil
 }
