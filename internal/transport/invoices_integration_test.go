@@ -21,9 +21,9 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
-	"github.com/cbl/cbl-kit/storagex"
+	"github.com/ZMichael3012/cbl-kit/storagex"
 
-	connectorv1 "github.com/cbl/cbl-protos/gen/go/billing/connector/v1"
+	connectorv1 "github.com/ZMichael3012/cbl-protos/gen/go/billing/connector/v1"
 
 	"github.com/cbl/cbl-billing-api/internal/connector"
 	"github.com/cbl/cbl-billing-api/internal/domain"

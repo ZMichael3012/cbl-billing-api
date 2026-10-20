@@ -14,7 +14,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	reportingv1 "github.com/cbl/cbl-protos/gen/go/billing/reporting/v1"
+	reportingv1 "github.com/ZMichael3012/cbl-protos/gen/go/billing/reporting/v1"
 )
 
 // Server describes the test ReportingService.

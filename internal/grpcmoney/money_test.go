@@ -6,7 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	commonv1 "github.com/cbl/cbl-protos/gen/go/billing/common/v1"
+	commonv1 "github.com/ZMichael3012/cbl-protos/gen/go/billing/common/v1"
 
 	"github.com/cbl/cbl-billing-api/internal/domain"
 )

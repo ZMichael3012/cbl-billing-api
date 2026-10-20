@@ -17,8 +17,8 @@ import (
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 
-	"github.com/cbl/cbl-kit/ginmw"
-	"github.com/cbl/cbl-kit/storagex"
+	"github.com/ZMichael3012/cbl-kit/ginmw"
+	"github.com/ZMichael3012/cbl-kit/storagex"
 
 	"github.com/cbl/cbl-billing-api/internal/connector"
 	"github.com/cbl/cbl-billing-api/internal/ledger"

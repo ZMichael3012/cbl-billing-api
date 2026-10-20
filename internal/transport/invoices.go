@@ -13,8 +13,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 
-	"github.com/cbl/cbl-kit/ginmw"
-	kitmoney "github.com/cbl/cbl-kit/money"
+	"github.com/ZMichael3012/cbl-kit/ginmw"
+	kitmoney "github.com/ZMichael3012/cbl-kit/money"
 
 	"github.com/cbl/cbl-billing-api/internal/connector"
 	"github.com/cbl/cbl-billing-api/internal/domain"

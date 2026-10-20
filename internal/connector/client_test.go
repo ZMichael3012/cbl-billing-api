@@ -10,7 +10,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	connectorv1 "github.com/cbl/cbl-protos/gen/go/billing/connector/v1"
+	connectorv1 "github.com/ZMichael3012/cbl-protos/gen/go/billing/connector/v1"
 
 	"github.com/cbl/cbl-billing-api/test/domainstub"
 )

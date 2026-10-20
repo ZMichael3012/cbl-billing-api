@@ -3,8 +3,8 @@
 package grpcmoney
 
 import (
-	"github.com/cbl/cbl-kit/money"
-	commonv1 "github.com/cbl/cbl-protos/gen/go/billing/common/v1"
+	"github.com/ZMichael3012/cbl-kit/money"
+	commonv1 "github.com/ZMichael3012/cbl-protos/gen/go/billing/common/v1"
 
 	"github.com/cbl/cbl-billing-api/internal/domain"
 )

@@ -15,7 +15,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	reportingv1 "github.com/cbl/cbl-protos/gen/go/billing/reporting/v1"
+	reportingv1 "github.com/ZMichael3012/cbl-protos/gen/go/billing/reporting/v1"
 )
 
 // Proxy domain errors (the transport translates them into problem+json).

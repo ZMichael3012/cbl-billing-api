@@ -15,7 +15,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	paymentv1 "github.com/cbl/cbl-protos/gen/go/billing/payment/v1"
+	paymentv1 "github.com/ZMichael3012/cbl-protos/gen/go/billing/payment/v1"
 
 	"github.com/cbl/cbl-billing-api/internal/domain"
 	"github.com/cbl/cbl-billing-api/internal/grpcmoney"

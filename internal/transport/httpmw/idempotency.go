@@ -10,7 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/cbl/cbl-kit/ginmw"
+	"github.com/ZMichael3012/cbl-kit/ginmw"
 
 	"github.com/cbl/cbl-billing-api/internal/domain"
 	"github.com/cbl/cbl-billing-api/internal/usecase"
