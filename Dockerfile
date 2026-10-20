@@ -1,20 +1,18 @@
+# Build context: the repository root (CBL-0.9). The cbl-kit and cbl-protos
+# modules are fetched from the GitHub origin; no sibling checkouts are needed.
 FROM golang:1.26-alpine AS build
+RUN apk add --no-cache git
+RUN git config --global url."https://github.com/ZMichael3012/".insteadOf "https://github.com/cbl/"
+ENV GOPRIVATE=github.com/cbl/*
 WORKDIR /src
-# Context - the services/ directory: replace ../cbl-kit and ../cbl-protos
-# require the neighboring modules.
-COPY cbl-kit/go.mod cbl-kit/go.sum ./cbl-kit/
-COPY cbl-protos/go.mod cbl-protos/go.sum ./cbl-protos/
-COPY cbl-billing-api/go.mod cbl-billing-api/go.sum ./cbl-billing-api/
-RUN cd cbl-billing-api && go mod download
-COPY cbl-kit ./cbl-kit
-COPY cbl-protos ./cbl-protos
-COPY cbl-billing-api ./cbl-billing-api
-RUN cd cbl-billing-api && CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o /out/billing-api ./cmd/billing-api
-
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o /out/billing-api ./cmd/billing-api
 FROM gcr.io/distroless/static-debian12:nonroot
 WORKDIR /app
 COPY --from=build /out/billing-api /app/billing-api
 # The migrations directory is required by the service (MIGRATIONS_DIR, storagex.Migrate).
-COPY --from=build /src/cbl-billing-api/migrations /app/migrations
+COPY --from=build /src/migrations /app/migrations
 EXPOSE 8010 9210
 ENTRYPOINT ["/app/billing-api"]
